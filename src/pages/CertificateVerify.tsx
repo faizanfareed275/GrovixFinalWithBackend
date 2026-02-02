@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
+import { useSearchParams } from "react-router-dom";
 
 type VerifyResponse = {
   ok: boolean;
@@ -38,6 +39,7 @@ type VerifyResponse = {
 };
 
 export default function CertificateVerify() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +57,17 @@ export default function CertificateVerify() {
     return `${apiUrl}${u}`;
   }, [data?.certificate?.pdfUrl, apiUrl]);
 
-  const handleVerify = async () => {
-    const q = code.trim();
+  const status = String(data?.certificate?.status || "").toUpperCase();
+
+  const handleVerify = async (input?: string) => {
+    const q = String(input ?? code).trim();
     if (!q) return;
+
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("code", q);
+      return next;
+    });
 
     setLoading(true);
     setError(null);
@@ -72,6 +82,25 @@ export default function CertificateVerify() {
       else setError("Failed to verify certificate");
     } finally {
       setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const q = String(searchParams.get("code") || searchParams.get("id") || "").trim();
+    if (!q) return;
+    setCode(q);
+    void handleVerify(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const copyLink = async () => {
+    try {
+      const q = code.trim();
+      if (!q) return;
+      const url = `${window.location.origin}/verify/certificate?code=${encodeURIComponent(q)}`;
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // ignore
     }
   };
 
@@ -93,10 +122,16 @@ export default function CertificateVerify() {
                 <Input
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleVerify();
+                  }}
                   placeholder="Enter certificate code (e.g., CERT-2026-ABC123)"
                 />
                 <Button variant="neon" onClick={() => void handleVerify()} disabled={loading || !code.trim()}>
                   {loading ? "Verifying…" : "Verify"}
+                </Button>
+                <Button variant="outline" onClick={() => void copyLink()} disabled={!code.trim()}>
+                  Copy Link
                 </Button>
               </div>
 
@@ -104,6 +139,15 @@ export default function CertificateVerify() {
 
               {data?.certificate && (
                 <div className="mt-6 rounded-xl border border-border p-4">
+                  {status && (
+                    <div
+                      className={`mb-4 rounded-lg px-3 py-2 text-sm ${
+                        status === "VALID" ? "bg-emerald-500/10 text-emerald-700" : "bg-destructive/10 text-destructive"
+                      }`}
+                    >
+                      {status === "VALID" ? "This certificate is valid." : "This certificate has been revoked."}
+                    </div>
+                  )}
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="text-sm text-muted-foreground">Certificate</div>

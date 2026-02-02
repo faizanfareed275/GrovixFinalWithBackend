@@ -1,6 +1,7 @@
-import { useMemo } from "react";
-import { Users, MessageSquare, Trophy, Briefcase, Calendar } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Users, MessageSquare, Trophy, Briefcase, Calendar, ClipboardCheck, Target } from "lucide-react";
 import { readJson, safeNumber } from "@/admin/lib/storage";
+import { apiFetch } from "@/lib/api";
 
 function StatCard({ title, value, icon: Icon }: { title: string; value: string; icon: any }) {
   return (
@@ -19,6 +20,13 @@ function StatCard({ title, value, icon: Icon }: { title: string; value: string; 
 }
 
 export default function AdminDashboard() {
+  const [v2Stats, setV2Stats] = useState<{
+    pendingAttempts: number;
+    lockedAssignments: number;
+    activeEnrollments: number;
+    pendingApplications: number;
+  } | null>(null);
+
   const stats = useMemo(() => {
     const users = readJson<any[]>("youthxp_users", []);
     const posts = readJson<any[]>("youthxp_community_posts", []);
@@ -37,6 +45,16 @@ export default function AdminDashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    apiFetch<{ ok: boolean; stats: { pendingAttempts: number; lockedAssignments: number; activeEnrollments: number; pendingApplications: number } }>(
+      "/internships/admin/v2/stats"
+    )
+      .then((d) => {
+        if (d?.stats) setV2Stats(d.stats);
+      })
+      .catch(() => setV2Stats(null));
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="glass-card p-6">
@@ -52,6 +70,22 @@ export default function AdminDashboard() {
         <StatCard title="Event Registrations" value={String(stats.events)} icon={Calendar} />
         <StatCard title="Total XP (current user)" value={String(stats.totalXP)} icon={Trophy} />
       </div>
+
+      {v2Stats && (
+        <>
+          <div className="glass-card p-6">
+            <div className="text-sm text-muted-foreground">Internships v2</div>
+            <div className="text-xl font-display font-bold mt-1">Operational KPIs</div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <StatCard title="Pending Attempts" value={String(v2Stats.pendingAttempts)} icon={ClipboardCheck as any} />
+            <StatCard title="Locked Assignments" value={String(v2Stats.lockedAssignments)} icon={Target as any} />
+            <StatCard title="Active Enrollments" value={String(v2Stats.activeEnrollments)} icon={Briefcase} />
+            <StatCard title="Pending Applications" value={String(v2Stats.pendingApplications)} icon={Users} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

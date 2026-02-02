@@ -82,6 +82,36 @@ export default function AdminInternshipV2Enrollments() {
     }
   };
 
+  const revokeCert = async (enrollmentId: string) => {
+    try {
+      await apiFetch(
+        `/internships/${encodeURIComponent(String(internshipId))}/admin/enrollments/${encodeURIComponent(enrollmentId)}/certificate/revoke`,
+        {
+          method: "POST",
+        }
+      );
+      toast.success("Certificate revoked");
+      await loadEnrollments(internshipId, batchId);
+    } catch {
+      toast.error("Failed to revoke certificate");
+    }
+  };
+
+  const restoreCert = async (enrollmentId: string) => {
+    try {
+      await apiFetch(
+        `/internships/${encodeURIComponent(String(internshipId))}/admin/enrollments/${encodeURIComponent(enrollmentId)}/certificate/restore`,
+        {
+          method: "POST",
+        }
+      );
+      toast.success("Certificate restored");
+      await loadEnrollments(internshipId, batchId);
+    } catch {
+      toast.error("Failed to restore certificate");
+    }
+  };
+
   const loadEnrollments = async (id: number, batch: string) => {
     setLoading(true);
     try {
@@ -243,6 +273,17 @@ export default function AdminInternshipV2Enrollments() {
                   <Button variant="outline" size="sm" onClick={() => void syncEnrollment(r.id)} title="Sync enrollment">
                     Sync
                   </Button>
+                  {r.certificate?.id && (
+                    r.certificate.status === "VALID" ? (
+                      <Button variant="outline" size="sm" onClick={() => void revokeCert(r.id)} title="Revoke certificate">
+                        Revoke Cert
+                      </Button>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={() => void restoreCert(r.id)} title="Restore certificate">
+                        Restore Cert
+                      </Button>
+                    )
+                  )}
                   <Button variant="outline" size="sm" onClick={() => void act(r.id, "freeze")} title="Freeze">
                     <Snowflake className="w-4 h-4" />
                   </Button>

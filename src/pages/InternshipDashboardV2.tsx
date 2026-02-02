@@ -98,6 +98,16 @@ export default function InternshipDashboardV2() {
     return data?.assignments.find((a) => a.id === selectedAssignmentId) || null;
   }, [data?.assignments, selectedAssignmentId]);
 
+  const progress = useMemo(() => {
+    const list = data?.assignments || [];
+    const eligible = list.filter((a) => a.status !== "SKIPPED");
+    const total = eligible.length;
+    const passed = eligible.filter((a) => !!a.passedAt).length;
+    const pending = eligible.filter((a) => a.latestAttempt?.gradeStatus === "PENDING").length;
+    const percent = total > 0 ? Math.round((passed / total) * 100) : 0;
+    return { total, passed, pending, percent };
+  }, [data?.assignments]);
+
   const downloadUrl = useMemo(() => {
     const u = data?.certificate?.pdfUrl;
     if (!u) return null;
@@ -216,6 +226,16 @@ export default function InternshipDashboardV2() {
                     Badge: <span className="text-foreground">{data.enrollment.currentBadge}</span> • Status:{" "}
                     <span className="text-foreground">{data.enrollment.status}</span> • Access:{" "}
                     <span className="text-foreground">{data.enrollment.accessMode}</span>
+                    {data?.assignments && (
+                      <>
+                        <span className="text-muted-foreground"> • </span>
+                        Progress:{" "}
+                        <span className="text-foreground">{progress.passed}</span>/{progress.total} ({progress.percent}%)
+                        <span className="text-muted-foreground"> • </span>
+                        Pending:{" "}
+                        <span className="text-foreground">{progress.pending}</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -279,7 +299,11 @@ export default function InternshipDashboardV2() {
                         </div>
                         <div className="mt-2 text-xs text-muted-foreground">
                           Status: {a.status}
-                          {a.locked ? " • Locked" : " • Open"}
+                          {a.status === "SUBMITTED"
+                            ? " • Awaiting grading"
+                            : a.locked
+                              ? " • Locked"
+                              : " • Open"}
                           {a.latestAttempt?.gradeStatus === "PENDING" ? " • Pending review" : ""}
                           {a.deadlineAt ? ` • Deadline: ${new Date(a.deadlineAt).toLocaleString()}` : ""}
                           {a.latestGradeStatus ? ` • Grade: ${a.latestGradeStatus}` : ""}
@@ -345,17 +369,25 @@ export default function InternshipDashboardV2() {
 
                       {!selectedAssignment.canSubmit && (
                         <div className="text-xs text-muted-foreground">
-                          {selectedAssignment.status === "SKIPPED"
-                            ? "This task was skipped by admin."
-                            : selectedAssignment.status === "SUBMITTED"
-                              ? "Submitted — awaiting grading."
-                              : selectedAssignment.locked
-                                ? "Locked — deadline passed."
-                                : selectedAssignment.remainingAttempts <= 0
-                                  ? "No submission attempts left."
-                                  : selectedAssignment.latestAttempt?.gradeStatus === "PENDING"
-                                    ? "Pending review — please wait for grading."
-                                    : "Submission is currently disabled for this task."}
+                          {data?.enrollment?.accessMode === "READ_ONLY"
+                            ? "Your internship access is read-only."
+                            : data?.enrollment?.endDate && new Date(data.enrollment.endDate).getTime() < Date.now()
+                              ? "Your internship period has ended."
+                              : data?.enrollment?.startDate && new Date(data.enrollment.startDate).getTime() > Date.now()
+                                ? "Your internship period has not started yet."
+                                : selectedAssignment.status === "SKIPPED"
+                                  ? "This task was skipped by admin."
+                                  : selectedAssignment.status === "SUBMITTED"
+                                    ? "Submitted — awaiting grading."
+                                    : selectedAssignment.unlockAt && new Date(selectedAssignment.unlockAt).getTime() > Date.now()
+                                      ? "Not unlocked yet."
+                                      : selectedAssignment.locked
+                                        ? "Locked — deadline passed."
+                                        : selectedAssignment.remainingAttempts <= 0
+                                          ? "No submission attempts left."
+                                          : selectedAssignment.latestAttempt?.gradeStatus === "PENDING"
+                                            ? "Pending review — please wait for grading."
+                                            : "Submission is currently disabled for this task."}
                         </div>
                       )}
 

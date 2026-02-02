@@ -123,6 +123,17 @@ async function maybeIssueLegacyCertificate(internshipId: number, userId: string)
     } as any,
   });
 
+  prisma.internshipEnrollment
+    .update({
+      where: { id: enrollment.id },
+      data: {
+        status: "COMPLETED" as any,
+        accessMode: "READ_ONLY" as any,
+        readOnlyAt: new Date(),
+      } as any,
+    })
+    .catch(() => {});
+
   const cfg = getSmtpConfig();
   if (cfg) {
     try {
@@ -243,6 +254,17 @@ async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) {
       qrPayload,
     } as any,
   });
+
+  prisma.internshipEnrollment
+    .update({
+      where: { id: enrollment.id },
+      data: {
+        status: "COMPLETED" as any,
+        accessMode: "READ_ONLY" as any,
+        readOnlyAt: new Date(),
+      } as any,
+    })
+    .catch(() => {});
 
   const cfg = getSmtpConfig();
   if (cfg) {
@@ -606,6 +628,25 @@ router.get("/", async (_req, res) => {
   return res.json({ internships: items });
 });
 
+router.get("/admin/v2/stats", requireAdmin, async (_req: any, res) => {
+  const [pendingAttempts, lockedAssignments, activeEnrollments, pendingApplications] = await Promise.all([
+    prisma.internshipTaskAttempt.count({ where: { gradeStatus: "PENDING" as any } as any }),
+    prisma.internshipTaskAssignment.count({ where: { status: "LOCKED" as any } as any }),
+    prisma.internshipEnrollment.count({ where: { status: "ACTIVE" as any } as any }),
+    prisma.internshipApplication.count({ where: { status: "pending" as any } as any }),
+  ]);
+
+  return res.json({
+    ok: true,
+    stats: {
+      pendingAttempts,
+      lockedAssignments,
+      activeEnrollments,
+      pendingApplications,
+    },
+  });
+});
+
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
@@ -685,6 +726,80 @@ router.delete("/:id", requireAdmin, async (req, res) => {
   }
 
   return res.json({ ok: true });
+});
+
+router.post("/:id/admin/enrollments/:enrollmentId/certificate/revoke", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
+  if (!cert) return res.status(404).json({ error: "no_certificate" });
+
+  const before = cert as any;
+  const updated = await prisma.internshipCertificate.update({
+    where: { id: cert.id },
+    data: { status: "REVOKED" as any } as any,
+  });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_CERTIFICATE_REVOKE",
+          entityType: "InternshipCertificate",
+          entityId: cert.id,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return res.json({ ok: true, certificate: updated });
+});
+
+router.post("/:id/admin/enrollments/:enrollmentId/certificate/restore", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
+  if (!cert) return res.status(404).json({ error: "no_certificate" });
+
+  const before = cert as any;
+  const updated = await prisma.internshipCertificate.update({
+    where: { id: cert.id },
+    data: { status: "VALID" as any } as any,
+  });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_CERTIFICATE_RESTORE",
+          entityType: "InternshipCertificate",
+          entityId: cert.id,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return res.json({ ok: true, certificate: updated });
 });
 
 router.post("/:id/apply", requireAuth, async (req: any, res) => {
@@ -949,7 +1064,7 @@ router.get("/:id/v2/dashboard", requireAuth, async (req: any, res) => {
   const startAtMs = enrollment.startDate ? new Date(enrollment.startDate as any).getTime() : null;
   const endAtMs = enrollment.endDate ? new Date(enrollment.endDate as any).getTime() : null;
   const enrollmentActive =
-    (enrollment as any).status !== "TERMINATED" &&
+    (enrollment as any).status === "ACTIVE" &&
     (enrollment as any).accessMode !== "READ_ONLY" &&
     (startAtMs === null || startAtMs <= now) &&
     (endAtMs === null || endAtMs >= now);
@@ -1066,7 +1181,10 @@ router.post("/:id/v2/assignments/:assignmentId/attempts", requireAuth, async (re
   if (assignment.enrollment.internshipId !== internshipId) return res.status(400).json({ error: "invalid_internship" });
   if (assignment.enrollment.userId !== userId) return res.status(403).json({ error: "forbidden" });
 
-  if ((assignment.enrollment as any).status === "TERMINATED") return res.status(403).json({ error: "terminated" });
+  const enrollmentStatus = String((assignment.enrollment as any).status || "");
+  if (enrollmentStatus === "TERMINATED") return res.status(403).json({ error: "terminated" });
+  if (enrollmentStatus === "FROZEN") return res.status(403).json({ error: "frozen" });
+  if (enrollmentStatus === "COMPLETED") return res.status(403).json({ error: "completed" });
   if ((assignment.enrollment as any).accessMode === "READ_ONLY") return res.status(403).json({ error: "read_only" });
 
   if (String((assignment as any).status) === "SKIPPED") return res.status(403).json({ error: "skipped" });
@@ -1199,7 +1317,10 @@ router.post("/:id/v2/assignments/:assignmentId/start", requireAuth, async (req: 
   if (assignment.enrollment.internshipId !== internshipId) return res.status(400).json({ error: "invalid_internship" });
   if (assignment.enrollment.userId !== userId) return res.status(403).json({ error: "forbidden" });
 
-  if ((assignment.enrollment as any).status === "TERMINATED") return res.status(403).json({ error: "terminated" });
+  const enrollmentStatus = String((assignment.enrollment as any).status || "");
+  if (enrollmentStatus === "TERMINATED") return res.status(403).json({ error: "terminated" });
+  if (enrollmentStatus === "FROZEN") return res.status(403).json({ error: "frozen" });
+  if (enrollmentStatus === "COMPLETED") return res.status(403).json({ error: "completed" });
   if ((assignment.enrollment as any).accessMode === "READ_ONLY") return res.status(403).json({ error: "read_only" });
 
   if (String((assignment as any).status) === "SKIPPED") return res.status(403).json({ error: "skipped" });
