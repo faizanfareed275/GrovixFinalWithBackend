@@ -1,0 +1,724 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model CommunityPost {
+  id        String   @id @default(uuid())
+  legacyId  BigInt   @unique
+  userId    String
+  user      String
+  avatar    String
+  title     String
+  company   String
+  timeAgo   String
+  content   String
+  images    String[]
+  xp        Int      @default(0)
+  likes     Int      @default(0)
+  likesBy   Json     @default("[]")
+  shares    Int      @default(0)
+  liked     Boolean  @default(false)
+  saved     Boolean  @default(false)
+  savesBy   Json     @default("[]")
+  comments  Json     @default("[]")
+  reactions Json?
+  userReaction String?
+  reactionsBy Json   @default("{}")
+  poll      Json?
+  aiScore   Int?
+  aiReason  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRef User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CommunityDiscussion {
+  id        String   @id @default(uuid())
+  legacyId  BigInt   @unique
+  userId    String
+  category  String
+  title     String
+  content   String
+  author    String
+  avatar    String
+  replies   Json     @default("[]")
+  views     Int      @default(0)
+  hot       Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRef User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum InternshipType {
+  free
+  paid
+}
+
+enum InternshipApplicationStatus {
+  pending
+  approved
+  rejected
+}
+
+enum InternshipBatchStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  RUNNING
+  ENDED
+}
+
+enum InternshipEnrollmentStatus {
+  ACTIVE
+  FROZEN
+  COMPLETED
+  TERMINATED
+}
+
+enum InternshipAccessMode {
+  FULL
+  READ_ONLY
+}
+
+enum InternshipBadgeLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum InternshipTaskAssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+  LOCKED
+  SKIPPED
+}
+
+enum InternshipSubmissionStatus {
+  SUBMITTED
+  RESUBMITTED
+  WITHDRAWN
+}
+
+enum InternshipGradeStatus {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum CertificateStatus {
+  VALID
+  REVOKED
+}
+
+enum StoredFilePurpose {
+  OFFER_LETTER
+  TASK_ATTACHMENT
+  TASK_SUBMISSION
+  CERTIFICATE
+}
+
+enum ChatConversationType {
+  DIRECT
+  GROUP
+}
+
+enum ChatParticipantRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ChatMessageType {
+  TEXT
+  IMAGE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  googleId     String?  @unique
+  avatarUrl    String?
+  role         Role     @default(USER)
+  xp           Int      @default(0)
+  bio          String?
+  location     String?
+  experience   String?
+  portfolio    String?
+  skills       String[] @default([])
+  githubUrl    String?
+  linkedinUrl  String?
+  twitterUrl   String?
+  websiteUrl   String?
+  available    Boolean  @default(true)
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  streak UserStreak?
+
+  internshipApplications InternshipApplication[]
+  internshipEnrollments  InternshipEnrollment[]
+  internshipSubmissions  InternshipSubmission[]
+
+  challengeCompletions    ChallengeCompletion[]
+
+  communityPosts          CommunityPost[]
+  communityDiscussions    CommunityDiscussion[]
+
+  jobPosts JobPost[]
+
+  following Follow[] @relation("UserFollowing")
+  followers Follow[] @relation("UserFollowers")
+
+  eventEnrollments EventEnrollment[]
+
+  chatParticipants ChatParticipant[]
+  chatMessagesSent ChatMessage[] @relation("ChatMessageSender")
+  chatDeviceKeys   UserDeviceKey[]
+  chatConversationsCreated ChatConversation[] @relation("ChatConversationCreator")
+  chatConversationKeys ChatConversationKey[]
+  chatPinnedMessages ChatPinnedMessage[]
+
+  auditLogs AuditLog[] @relation("AuditLogActor")
+}
+
+model UserStreak {
+  userId            String  @id
+  count             Int     @default(0)
+  longestStreak     Int     @default(0)
+  totalActiveDays   Int     @default(0)
+  lastActivityDate  String?
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ChatConversation {
+  id        String               @id @default(uuid())
+  type      ChatConversationType @default(DIRECT)
+  name      String?
+  directKey String?              @unique
+  createdBy String
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  creator User @relation("ChatConversationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  participants ChatParticipant[]
+  messages ChatMessage[]
+  keys ChatConversationKey[]
+  pinnedMessages ChatPinnedMessage[]
+
+  @@index([createdBy])
+  @@index([type])
+}
+
+model ChatParticipant {
+  id             String             @id @default(uuid())
+  conversationId String
+  userId         String
+  role           ChatParticipantRole @default(MEMBER)
+  joinedAt       DateTime           @default(now())
+  lastReadAt     DateTime?
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model ChatMessage {
+  id             String          @id @default(uuid())
+  conversationId String
+  senderId       String
+  type           ChatMessageType @default(TEXT)
+  ivB64          String
+  ciphertextB64  String
+  createdAt      DateTime        @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User            @relation("ChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  pinnedIn ChatPinnedMessage[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model ChatPinnedMessage {
+  id             String   @id @default(uuid())
+  conversationId String
+  messageId      String
+  pinnedBy       String
+  createdAt      DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      ChatMessage      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedByUser User             @relation(fields: [pinnedBy], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId])
+  @@index([pinnedBy])
+}
+
+model UserDeviceKey {
+  id        String   @id @default(uuid())
+  userId    String
+  deviceId  String
+  publicKey Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationKeys ChatConversationKey[]
+
+  @@unique([userId, deviceId])
+  @@index([deviceId])
+  @@index([userId])
+}
+
+model ChatConversationKey {
+  id              String   @id @default(uuid())
+  conversationId  String
+  userId          String
+  deviceKeyId     String
+  ivB64           String?
+  encryptedKeyB64 String
+  createdAt       DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  deviceKey    UserDeviceKey    @relation(fields: [deviceKeyId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, deviceKeyId])
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserFollowing", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserFollowers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+}
+
+model ChallengeCompletion {
+  id            String   @id @default(uuid())
+  userId        String
+  challengeId   Int
+  title         String
+  category      String
+  xpEarned      Int
+  completedAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, challengeId])
+}
+
+model JobPost {
+  id          Int      @id @default(autoincrement())
+  userId      String
+  title       String
+  company     String
+  minLevel    Int
+  minXP       Int
+  salary      String
+  type        String
+  location    String
+  skills      String[] @default([])
+  description String
+  applicants  Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRef User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Internship {
+  id          Int      @id @default(autoincrement())
+  internshipCode String? @unique
+  title       String
+  company     String
+  type        InternshipType
+  xpRequired  Int
+  salary      String?
+  duration    String
+  location    String
+  skills      String[]
+  description String
+  applicants  Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batches      InternshipBatch[]
+  applications InternshipApplication[]
+  enrollments  InternshipEnrollment[]
+  tasks        InternshipTask[]
+
+  badgeRules   InternshipBadgeRule[]
+  taskTemplates InternshipTaskTemplate[]
+  certificates InternshipCertificate[]
+}
+
+model InternshipBatch {
+  id            Int                  @id @default(autoincrement())
+  internshipId  Int
+  batchCode     String               @unique
+  name          String
+  startDate     DateTime
+  endDate       DateTime
+  applicationOpenAt  DateTime?
+  applicationCloseAt DateTime?
+  capacity      Int?
+  status        InternshipBatchStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  applications InternshipApplication[]
+  enrollments  InternshipEnrollment[]
+
+  @@index([internshipId])
+  @@index([status])
+}
+
+model InternshipApplication {
+  id             String                     @id @default(uuid())
+  internshipId   Int
+  batchId        Int?
+  userId         String
+  status         InternshipApplicationStatus @default(pending)
+  createdAt      DateTime                   @default(now())
+  reviewedAt     DateTime?
+  reviewedBy     String?
+
+  portfolio      String?
+  linkedin       String?
+  github         String?
+  location       String?
+  phone          String?
+  coverLetter    String?
+
+  offerSubject   String?
+  offerBody      String?
+  offerFileId    String?
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  batch      InternshipBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  offerFile StoredFile? @relation("OfferLetterFile", fields: [offerFileId], references: [id], onDelete: SetNull)
+
+  @@unique([batchId, userId])
+  @@index([batchId])
+  @@index([internshipId, status])
+}
+
+model InternshipEnrollment {
+  id           String   @id @default(uuid())
+  internshipId Int
+  batchId      Int?
+  userId       String
+
+  startDate DateTime
+  endDate   DateTime
+  progress  Int      @default(0)
+  totalXP   Int      @default(0)
+  earnedXP  Int      @default(0)
+
+  status     InternshipEnrollmentStatus @default(ACTIVE)
+  accessMode InternshipAccessMode       @default(FULL)
+  terminatedAt DateTime?
+  frozenAt     DateTime?
+  readOnlyAt   DateTime?
+
+  currentBadge InternshipBadgeLevel @default(BEGINNER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  batch      InternshipBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  taskAssignments InternshipTaskAssignment[]
+  certificate InternshipCertificate?
+
+  @@unique([internshipId, userId])
+  @@index([batchId])
+  @@index([userId, status])
+}
+
+model InternshipBadgeRule {
+  id           String               @id @default(uuid())
+  internshipId Int
+  level        InternshipBadgeLevel
+  minCompletionPercent Int @default(0)
+  minXp        Int @default(0)
+  sortOrder    Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  @@unique([internshipId, level])
+  @@index([internshipId, sortOrder])
+}
+
+model InternshipTaskTemplate {
+  id           String               @id @default(uuid())
+  internshipId Int
+  badgeLevel   InternshipBadgeLevel
+  title        String
+  description  String
+  xpReward     Int      @default(0)
+
+  sortOrder    Int      @default(0)
+
+  unlockOffsetDays Int?
+  timePeriodDays   Int?
+
+  maxAttempts Int @default(1)
+  autoPass    Boolean @default(false)
+
+  rubricJson  Json?
+  gradingNotes String?
+
+  attachmentFileId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  attachmentFile StoredFile? @relation("TaskTemplateAttachment", fields: [attachmentFileId], references: [id], onDelete: SetNull)
+  assignments InternshipTaskAssignment[]
+
+  @@index([internshipId, badgeLevel, sortOrder])
+}
+
+model InternshipTaskAssignment {
+  id           String   @id @default(uuid())
+  enrollmentId String
+  templateId   String
+
+  status InternshipTaskAssignmentStatus @default(ASSIGNED)
+
+  assignedAt DateTime @default(now())
+  unlockAt   DateTime?
+  deadlineAt DateTime?
+  lockedAt   DateTime?
+
+  maxAttempts       Int @default(1)
+  remainingAttempts Int @default(1)
+
+  latestGradeStatus InternshipGradeStatus @default(PENDING)
+  passedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  enrollment InternshipEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  template   InternshipTaskTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  attempts   InternshipTaskAttempt[]
+
+  @@unique([enrollmentId, templateId])
+  @@index([enrollmentId, status])
+  @@index([templateId])
+}
+
+model InternshipTaskAttempt {
+  id           String   @id @default(uuid())
+  assignmentId String
+  attemptNo    Int
+
+  status InternshipSubmissionStatus @default(SUBMITTED)
+  submittedAt DateTime @default(now())
+
+  type     String
+  content  String
+  fileId   String?
+  fileName String?
+  notes    String?
+
+  gradedBy String?
+  gradedAt DateTime?
+  gradeStatus InternshipGradeStatus @default(PENDING)
+  score     Int?
+  maxScore  Int?
+  feedback  String?
+  rubricScores Json?
+
+  assignment InternshipTaskAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  file StoredFile? @relation("TaskAttemptFile", fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@unique([assignmentId, attemptNo])
+  @@index([assignmentId, submittedAt])
+}
+
+model InternshipCertificate {
+  id           String   @id @default(uuid())
+  internshipId Int
+  enrollmentId String  @unique
+  certificateCode String @unique
+  status       CertificateStatus @default(VALID)
+
+  issuedAt DateTime @default(now())
+  fileId   String?
+  qrPayload String?
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  enrollment InternshipEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  file StoredFile? @relation("CertificateFile", fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@index([internshipId])
+}
+
+model StoredFile {
+  id        String   @id @default(uuid())
+  purpose   StoredFilePurpose
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+  bytes     Bytes
+
+  storageProvider String?
+  externalUrl     String?
+
+  createdAt DateTime @default(now())
+
+  offerLetterApplications InternshipApplication[] @relation("OfferLetterFile")
+  taskTemplateAttachments InternshipTaskTemplate[] @relation("TaskTemplateAttachment")
+  taskAttemptFiles InternshipTaskAttempt[] @relation("TaskAttemptFile")
+  certificateFiles InternshipCertificate[] @relation("CertificateFile")
+
+  @@index([purpose])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String?
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  actor User @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model InternshipTask {
+  id           String   @id @default(uuid())
+  internshipId Int
+  title        String
+  description  String
+  week         Int
+  xpReward     Int
+
+  attachmentType String?
+  attachmentUrl  String?
+  attachmentName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  submissions InternshipSubmission[]
+}
+
+model InternshipSubmission {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+
+  type      String
+  content   String
+  fileName  String?
+  notes     String?
+  submittedAt DateTime @default(now())
+
+  task InternshipTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId])
+}
+
+model Event {
+  id           Int      @id @default(autoincrement())
+  title        String
+  type         String
+  description  String?
+  venue        String?
+  link         String?
+  prize        String?
+  date         String?
+  startAt      DateTime
+  endAt        DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  enrollments EventEnrollment[]
+
+  @@index([startAt])
+}
+
+model EventEnrollment {
+  id        String   @id @default(uuid())
+  eventId   Int
+  userId    String
+  name      String?
+  email     String?
+  phone     String?
+  reason    String?
+  status    String   @default("enrolled")
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}

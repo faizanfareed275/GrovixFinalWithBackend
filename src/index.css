@@ -1,0 +1,375 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* YouthXP Design System - Futuristic Neon Gaming Theme */
+
+@layer base {
+  :root {
+    /* Light Theme - Clean Modern */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 122 39% 49%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+
+    /* Custom Gaming Colors - Light adjusted */
+    --neon-blue: 190 100% 40%;
+    --neon-purple: 270 70% 55%;
+    --neon-green: 120 80% 40%;
+    --neon-pink: 330 80% 55%;
+    --neon-orange: 25 90% 50%;
+    --cyber-dark: 225 25% 10%;
+    --cyber-darker: 225 30% 5%;
+
+    --xp-bar: 190 100% 40%;
+    --xp-glow: 190 100% 50%;
+    --level-gold: 45 100% 45%;
+    --streak-fire: 15 100% 50%;
+
+    --glass-bg: 0 0% 100%;
+    --glass-border: 210 20% 85%;
+
+    --sidebar-background: 210 20% 96%;
+    --sidebar-foreground: 225 25% 10%;
+    --sidebar-primary: 190 100% 40%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 270 70% 55%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 210 20% 88%;
+    --sidebar-ring: 190 100% 40%;
+  }
+
+  .dark {
+    /* Core Background - Jet Black with depth */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 122 39% 49%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+
+    --neon-blue: 190 100% 50%;
+    --neon-purple: 270 80% 60%;
+    --neon-green: 120 100% 55%;
+    --neon-pink: 330 100% 60%;
+    --neon-orange: 25 100% 55%;
+    --cyber-dark: 225 25% 4%;
+    --cyber-darker: 225 30% 2%;
+
+    --xp-bar: 190 100% 50%;
+    --xp-glow: 190 100% 60%;
+    --level-gold: 45 100% 50%;
+    --streak-fire: 15 100% 55%;
+
+    --glass-bg: 225 25% 10%;
+    --glass-border: 225 20% 25%;
+
+    --sidebar-background: 225 25% 6%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 190 100% 50%;
+    --sidebar-primary-foreground: 225 25% 4%;
+    --sidebar-accent: 270 80% 60%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 225 20% 18%;
+    --sidebar-ring: 190 100% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-bold tracking-tight;
+  }
+  /* Default icon color (Lucide) as brand primary when no explicit text-* class present */
+  .lucide:not([class*="text-"]) { color: hsl(var(--primary)); }
+  /* Ensure icons inside primary buttons follow foreground (white) */
+  .bg-primary .lucide, .text-primary-foreground .lucide { color: hsl(var(--primary-foreground)); }
+}
+
+@layer components {
+  /* Glassmorphism Card */
+  .glass-card {
+    @apply bg-card/90 backdrop-blur-md border border-border rounded-lg shadow-sm transition-shadow;
+  }
+
+  /* Neon Glow Effects */
+  .glow-blue {
+    box-shadow: 0 4px 16px hsl(var(--neon-blue) / 0.12);
+  }
+
+  .glow-purple {
+    box-shadow: 0 4px 16px hsl(var(--neon-purple) / 0.12);
+  }
+
+  .glow-green {
+    box-shadow: 0 4px 16px hsl(var(--neon-green) / 0.12);
+  }
+
+  .text-glow-blue {
+    text-shadow: 0 0 4px hsl(var(--neon-blue) / 0.25);
+  }
+
+  .text-glow-purple {
+    text-shadow: 0 0 4px hsl(var(--neon-purple) / 0.25);
+  }
+
+  /* XP Bar Styles */
+  .xp-bar {
+    @apply relative h-4 rounded-full overflow-hidden;
+    background: linear-gradient(90deg, hsl(var(--cyber-dark)), hsl(var(--muted)));
+  }
+
+  .xp-bar-fill {
+    @apply h-full rounded-full transition-all duration-1000 ease-out;
+    background: linear-gradient(90deg, hsl(var(--neon-blue)), hsl(var(--neon-purple)));
+    box-shadow: 0 0 8px hsl(var(--neon-blue) / 0.35);
+  }
+
+  /* Animated Border */
+  .border-glow {
+    position: relative;
+  }
+
+  .border-glow::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    pointer-events: none;
+    z-index: 0;
+    background: linear-gradient(45deg, hsl(var(--neon-blue)), hsl(var(--neon-purple)), hsl(var(--neon-green)), hsl(var(--neon-blue)));
+    background-size: 300% 300%;
+    animation: borderGlow 4s linear infinite;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .border-glow:hover::before {
+    opacity: 1;
+  }
+
+  .border-glow > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Level Badge */
+  .level-badge {
+    @apply inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold;
+    background: linear-gradient(135deg, hsl(var(--level-gold)), hsl(var(--neon-orange)));
+    color: hsl(var(--cyber-dark));
+  }
+
+  /* Streak Badge */
+  .streak-badge {
+    @apply inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold;
+    background: linear-gradient(135deg, hsl(var(--streak-fire)), hsl(var(--neon-orange)));
+    color: white;
+  }
+
+  /* Difficulty Badges */
+  .badge-easy {
+    @apply bg-accent/20 text-accent border border-accent/30;
+  }
+
+  .badge-medium {
+    @apply bg-primary/20 text-primary border border-primary/30;
+  }
+
+  .badge-hard {
+    @apply bg-secondary/20 text-secondary border border-secondary/30;
+  }
+
+  .badge-expert {
+    @apply bg-destructive/20 text-destructive border border-destructive/30;
+  }
+
+  /* Free/Paid Track Badges */
+  .badge-free {
+    @apply bg-accent/20 text-accent border border-accent/40 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider;
+  }
+
+  .badge-paid {
+    @apply px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider;
+    background: linear-gradient(135deg, hsl(var(--level-gold)), hsl(var(--neon-orange)));
+    color: hsl(var(--cyber-dark));
+  }
+
+  /* Hover Card 3D Effect */
+  .card-3d {
+    @apply transition-all duration-300 ease-out;
+    transform-style: preserve-3d;
+    perspective: 1000px;
+  }
+
+  .card-3d:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Gradient Text */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--neon-blue)), hsl(var(--neon-purple)));
+  }
+
+  .gradient-text-green {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--neon-green)), hsl(var(--neon-blue)));
+  }
+
+  /* Section Gradients */
+  .section-gradient {
+    @apply relative;
+  }
+
+  .section-gradient::before {
+    content: '';
+    @apply absolute inset-0 pointer-events-none;
+    background: linear-gradient(180deg, transparent 0%, hsl(var(--cyber-dark) / 0.5) 100%);
+  }
+}
+
+@layer utilities {
+  /* Custom Scrollbar */
+  .scrollbar-cyber::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .scrollbar-cyber::-webkit-scrollbar-track {
+    background: hsl(var(--cyber-dark));
+  }
+
+  .scrollbar-cyber::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, hsl(var(--neon-blue)), hsl(var(--neon-purple)));
+    border-radius: 4px;
+  }
+
+  /* Floating Animation */
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  /* Pulse Glow Animation */
+  .animate-pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
+}
+
+/* Keyframes */
+@keyframes borderGlow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { 
+    box-shadow: 0 0 20px hsl(var(--neon-blue) / 0.4);
+  }
+  50% { 
+    box-shadow: 0 0 40px hsl(var(--neon-blue) / 0.8), 0 0 60px hsl(var(--neon-purple) / 0.4);
+  }
+}
+
+@keyframes xpBurst {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Shimmer Loading Effect */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted-foreground) / 0.1) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Mobile bottom navigation spacing */
+@media (max-width: 767px) {
+  main {
+    padding-bottom: 5.5rem;
+  }
+}
