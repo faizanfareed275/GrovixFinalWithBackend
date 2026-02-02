@@ -14,6 +14,16 @@ import type { Internship } from "@/data/internships";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
 
+type InternshipBatch = {
+  id: number;
+  internshipId: number;
+  batchCode: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+};
+
 const defaultInternship = {
   id: 0,
   title: "Internship",
@@ -36,6 +46,8 @@ export default function InternshipApplication() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [internshipDetails, setInternshipDetails] = useState<Internship>(defaultInternship);
+  const [batches, setBatches] = useState<InternshipBatch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -59,6 +71,42 @@ export default function InternshipApplication() {
     }
   }, [id]);
 
+  useEffect(() => {
+    if (!id) return;
+    apiFetch<{ batches: InternshipBatch[] }>(`/internships/${id}/batches`)
+      .then((d) => {
+        const list = Array.isArray(d?.batches) ? d.batches : [];
+        setBatches(list);
+
+        const preferred =
+          list.find((b) => String(b.status || "").toUpperCase() === "OPEN") ||
+          list[0] ||
+          null;
+        setSelectedBatchId(preferred ? preferred.id : null);
+      })
+      .catch(() => {
+        setBatches([]);
+        setSelectedBatchId(null);
+      });
+  }, [id]);
+
+  useEffect(() => {
+    if (!user) return;
+    setFormData((prev) => {
+      const name = String((user as any)?.name || "").trim();
+      const email = String((user as any)?.email || "").trim();
+      const parts = name ? name.split(/\s+/) : [];
+      const firstName = prev.firstName || (parts[0] || "");
+      const lastName = prev.lastName || (parts.length > 1 ? parts.slice(1).join(" ") : "");
+      return {
+        ...prev,
+        firstName,
+        lastName,
+        email: prev.email || email,
+      };
+    });
+  }, [user]);
+
   const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
@@ -79,6 +127,7 @@ export default function InternshipApplication() {
       await apiFetch(`/internships/${internshipDetails.id}/apply`, {
         method: "POST",
         body: JSON.stringify({
+          batchId: selectedBatchId,
           portfolio: formData.portfolio,
           linkedin: formData.linkedin,
           github: formData.github,
@@ -100,6 +149,7 @@ export default function InternshipApplication() {
   const prevStep = () => setStep(step - 1);
 
   if (submitted) {
+    const selectedBatch = batches.find((b) => b.id === selectedBatchId) || null;
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
@@ -126,15 +176,14 @@ export default function InternshipApplication() {
                   Your application has been submitted successfully. You will be contacted soon after review.
                 </p>
                 <p className="text-sm text-muted-foreground mb-6">
-                  You are now enrolled in the {internshipDetails.title} at {internshipDetails.company}. 
-                  Track your progress and complete tasks to earn XP and unlock your certificate!
+                  Your application will be reviewed by an admin.
+                  {selectedBatch ? (
+                    <> Batch: {selectedBatch.batchCode} ({selectedBatch.name}).</>
+                  ) : null}
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button variant="neon" onClick={() => navigate(`/internships/dashboard/${internshipDetails.id}`)}>
-                    Go to Dashboard
-                  </Button>
-                  <Button variant="outline" onClick={() => navigate("/internships")}>
-                    Browse More Internships
+                  <Button variant="neon" onClick={() => navigate("/internships")}>
+                    Back to Internships
                   </Button>
                 </div>
               </div>
@@ -196,6 +245,34 @@ export default function InternshipApplication() {
                     <span className="text-primary font-medium">{internshipDetails.xpRequired} XP Required</span>
                   </div>
                 </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="text-sm font-medium mb-2">Select Batch</div>
+                <select
+                  value={selectedBatchId ?? ""}
+                  onChange={(e) => setSelectedBatchId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-3 py-2 rounded-md bg-card/60 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {batches.map((b) => (
+                    <option key={b.id} value={b.id} className="bg-card">
+                      {b.batchCode} • {b.name}
+                    </option>
+                  ))}
+                  {batches.length === 0 && (
+                    <option value="" className="bg-card">
+                      Default batch
+                    </option>
+                  )}
+                </select>
+                {selectedBatchId && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {(() => {
+                      const b = batches.find((x) => x.id === selectedBatchId);
+                      if (!b) return null;
+                      return `Dates: ${new Date(b.startDate).toLocaleDateString()} – ${new Date(b.endDate).toLocaleDateString()} • Status: ${b.status}`;
+                    })()}
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-border">
                 {internshipDetails.skills.map((skill) => (

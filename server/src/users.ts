@@ -171,54 +171,26 @@ router.get("/me", requireAuth, async (req: any, res) => {
   });
 
   const enrollments = await prisma.internshipEnrollment.findMany({ where: { userId } });
-  const internshipIds = enrollments.map((e) => e.internshipId);
+  const enrollmentIds = enrollments.map((e) => e.id);
+  const certRows = enrollmentIds.length
+    ? await prisma.internshipCertificate.findMany({
+        where: { enrollmentId: { in: enrollmentIds } },
+        orderBy: { issuedAt: "desc" },
+        include: {
+          internship: { select: { id: true, title: true, company: true, type: true } },
+        },
+      })
+    : [];
 
-  const tasksCounts = await prisma.internshipTask.groupBy({
-    by: ["internshipId"],
-    where: internshipIds.length ? { internshipId: { in: internshipIds } } : { internshipId: { in: [] } },
-    _count: { _all: true },
-  });
-  const tasksCountByInternship = new Map<number, number>(tasksCounts.map((r) => [r.internshipId, r._count._all]));
-
-  const submissions = await prisma.internshipSubmission.findMany({
-    where: internshipIds.length ? { userId, task: { internshipId: { in: internshipIds } } } : { userId, task: { internshipId: { in: [] } } },
-    select: { task: { select: { internshipId: true } }, submittedAt: true },
-  });
-
-  const submissionsCountByInternship = new Map<number, number>();
-  const maxSubmittedAtByInternship = new Map<number, Date>();
-  for (const s of submissions as any[]) {
-    const internshipId = Number(s?.task?.internshipId);
-    if (!Number.isFinite(internshipId)) continue;
-    submissionsCountByInternship.set(internshipId, (submissionsCountByInternship.get(internshipId) || 0) + 1);
-    const t = s.submittedAt instanceof Date ? s.submittedAt : new Date(s.submittedAt);
-    const prev = maxSubmittedAtByInternship.get(internshipId);
-    if (!prev || (t && t.getTime() > prev.getTime())) maxSubmittedAtByInternship.set(internshipId, t);
-  }
-
-  const internships = await prisma.internship.findMany({
-    where: internshipIds.length ? { id: { in: internshipIds } } : { id: { in: [] } },
-    select: { id: true, title: true, company: true, type: true },
-  });
-  const internshipById = new Map<number, any>(internships.map((i) => [i.id, i]));
-
-  const certificates = internshipIds
-    .map((internshipId) => {
-      const totalTasks = tasksCountByInternship.get(internshipId) || 0;
-      const completedTasks = submissionsCountByInternship.get(internshipId) || 0;
-      if (totalTasks <= 0 || completedTasks < totalTasks) return null;
-      const internship = internshipById.get(internshipId);
-      if (!internship) return null;
-      const completedAt = maxSubmittedAtByInternship.get(internshipId);
-      return {
-        internshipId,
-        title: String(internship.title || ""),
-        company: String(internship.company || ""),
-        type: String(internship.type || "free"),
-        completedAt: completedAt ? completedAt.toISOString().slice(0, 10) : null,
-      };
-    })
-    .filter(Boolean);
+  const certificates = certRows.map((c: any) => ({
+    internshipId: c.internshipId,
+    title: String(c.internship?.title || ""),
+    company: String(c.internship?.company || ""),
+    type: String(c.internship?.type || "free"),
+    completedAt: c.issuedAt ? new Date(c.issuedAt).toISOString().slice(0, 10) : null,
+    certificateCode: c.certificateCode,
+    status: c.status,
+  }));
 
   return res.json({
     user: toPublicProfile(user, { followersCount, followingCount, challengesCompleted, streak, badges, certificates }),
@@ -335,54 +307,26 @@ router.get("/:id", async (req, res) => {
   });
 
   const enrollments = await prisma.internshipEnrollment.findMany({ where: { userId: id } });
-  const internshipIds = enrollments.map((e) => e.internshipId);
+  const enrollmentIds = enrollments.map((e) => e.id);
+  const certRows = enrollmentIds.length
+    ? await prisma.internshipCertificate.findMany({
+        where: { enrollmentId: { in: enrollmentIds } },
+        orderBy: { issuedAt: "desc" },
+        include: {
+          internship: { select: { id: true, title: true, company: true, type: true } },
+        },
+      })
+    : [];
 
-  const tasksCounts = await prisma.internshipTask.groupBy({
-    by: ["internshipId"],
-    where: internshipIds.length ? { internshipId: { in: internshipIds } } : undefined,
-    _count: { _all: true },
-  });
-  const tasksCountByInternship = new Map<number, number>(tasksCounts.map((r) => [r.internshipId, r._count._all]));
-
-  const submissions = await prisma.internshipSubmission.findMany({
-    where: internshipIds.length ? { userId: id, task: { internshipId: { in: internshipIds } } } : { userId: id, task: { internshipId: { in: [] } } },
-    select: { task: { select: { internshipId: true } }, submittedAt: true },
-  });
-
-  const submissionsCountByInternship = new Map<number, number>();
-  const maxSubmittedAtByInternship = new Map<number, Date>();
-  for (const s of submissions as any[]) {
-    const internshipId = Number(s?.task?.internshipId);
-    if (!Number.isFinite(internshipId)) continue;
-    submissionsCountByInternship.set(internshipId, (submissionsCountByInternship.get(internshipId) || 0) + 1);
-    const t = s.submittedAt instanceof Date ? s.submittedAt : new Date(s.submittedAt);
-    const prev = maxSubmittedAtByInternship.get(internshipId);
-    if (!prev || (t && t.getTime() > prev.getTime())) maxSubmittedAtByInternship.set(internshipId, t);
-  }
-
-  const internships = await prisma.internship.findMany({
-    where: internshipIds.length ? { id: { in: internshipIds } } : { id: { in: [] } },
-    select: { id: true, title: true, company: true, type: true },
-  });
-  const internshipById = new Map<number, any>(internships.map((i) => [i.id, i]));
-
-  const certificates = internshipIds
-    .map((internshipId) => {
-      const totalTasks = tasksCountByInternship.get(internshipId) || 0;
-      const completedTasks = submissionsCountByInternship.get(internshipId) || 0;
-      if (totalTasks <= 0 || completedTasks < totalTasks) return null;
-      const internship = internshipById.get(internshipId);
-      if (!internship) return null;
-      const completedAt = maxSubmittedAtByInternship.get(internshipId);
-      return {
-        internshipId,
-        title: String(internship.title || ""),
-        company: String(internship.company || ""),
-        type: String(internship.type || "free"),
-        completedAt: completedAt ? completedAt.toISOString().slice(0, 10) : null,
-      };
-    })
-    .filter(Boolean);
+  const certificates = certRows.map((c: any) => ({
+    internshipId: c.internshipId,
+    title: String(c.internship?.title || ""),
+    company: String(c.internship?.company || ""),
+    type: String(c.internship?.type || "free"),
+    completedAt: c.issuedAt ? new Date(c.issuedAt).toISOString().slice(0, 10) : null,
+    certificateCode: c.certificateCode,
+    status: c.status,
+  }));
 
   return res.json({
     user: toPublicProfile(user, {

@@ -16,6 +16,7 @@ import eventsRouter from "./events";
 import chatRouter from "./chat";
 import jobsRouter from "./jobs";
 import certificatesRouter from "./certificates";
+import filesRouter from "./files";
 import { startEventEmailScheduler } from "./eventEmailScheduler";
 import { prisma } from "./db";
 
@@ -54,6 +55,7 @@ app.use("/events", eventsRouter);
 app.use("/chat", chatRouter);
 app.use("/jobs", jobsRouter);
 app.use("/certificates", certificatesRouter);
+app.use("/files", filesRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, name: "Grovix API", ts: Date.now() });

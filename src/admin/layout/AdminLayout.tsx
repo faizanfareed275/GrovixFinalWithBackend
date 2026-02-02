@@ -48,6 +48,12 @@ const navSections: Array<{
       { to: "/admin/internships", label: "Enrollments", icon: Briefcase },
       { to: "/admin/internship-tasks", label: "Tasks", icon: Target },
       { to: "/admin/internship-submissions", label: "Submissions", icon: ClipboardCheck },
+      { to: "/admin/internship-v2-templates", label: "v2 Templates", icon: Target },
+      { to: "/admin/internship-v2-assignments", label: "v2 Assignments", icon: Target },
+      { to: "/admin/internship-v2-attempts", label: "v2 Attempts", icon: ClipboardCheck },
+      { to: "/admin/internship-v2-batches", label: "v2 Batches", icon: Calendar },
+      { to: "/admin/internship-v2-applications", label: "v2 Applications", icon: Users },
+      { to: "/admin/internship-v2-enrollments", label: "v2 Enrollments", icon: Briefcase },
     ],
   },
   {

@@ -26,6 +26,8 @@ router.get("/verify", async (req, res) => {
 
   const batch = (cert as any).enrollment?.batch;
 
+  const pdfUrl = cert.status === "VALID" && cert.fileId ? `/certificates/${encodeURIComponent(cert.certificateCode)}/pdf` : undefined;
+
   return res.json({
     ok: true,
     certificate: {
@@ -56,8 +58,27 @@ router.get("/verify", async (req, res) => {
         startDate: cert.enrollment.startDate.toISOString(),
         endDate: cert.enrollment.endDate.toISOString(),
       },
+      pdfUrl,
     },
   });
+});
+
+router.get("/:code/pdf", async (req, res) => {
+  const code = String(req.params.code || "").trim();
+  if (!code) return res.status(400).json({ error: "missing_code" });
+
+  const cert = await prisma.internshipCertificate.findUnique({
+    where: { certificateCode: code },
+    include: { file: true },
+  });
+
+  if (!cert) return res.status(404).json({ error: "not_found" });
+  if (cert.status !== "VALID") return res.status(403).json({ error: "revoked" });
+  if (!cert.file) return res.status(404).json({ error: "missing_file" });
+
+  res.setHeader("Content-Type", cert.file.mimeType || "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename=\"${String(cert.file.fileName || "certificate.pdf").replace(/\"/g, "") }\"`);
+  return res.status(200).send(Buffer.from(cert.file.bytes as any));
 });
 
 export default router;
