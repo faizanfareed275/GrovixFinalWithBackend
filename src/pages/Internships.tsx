@@ -27,6 +27,8 @@ export default function Internships() {
   const [internships, setInternships] = useState<Internship[]>([]);
   const [selectedInternship, setSelectedInternship] = useState<(typeof internships)[0] | null>(null);
 
+  const [enrolledIds, setEnrolledIds] = useState<number[]>([]);
+
   const [userXP, setUserXP] = useState(0);
 
   useEffect(() => {
@@ -49,6 +51,21 @@ export default function Internships() {
       .catch(() => setUserXP(0));
   }, [user]);
 
+  useEffect(() => {
+    if (!user) {
+      setEnrolledIds([]);
+      return;
+    }
+    apiFetch<{ enrollments: Array<{ id: number }> }>("/internships/me/enrollments")
+      .then((d) => {
+        const ids = (Array.isArray(d?.enrollments) ? d.enrollments : [])
+          .map((e) => Number((e as any)?.id))
+          .filter((n) => Number.isFinite(n));
+        setEnrolledIds(ids);
+      })
+      .catch(() => setEnrolledIds([]));
+  }, [user]);
+
   const filteredInternships = internships.filter((internship) => {
     if (activeTrack === "all") return true;
     return internship.type === activeTrack;
@@ -57,6 +74,7 @@ export default function Internships() {
   const isUnlocked = (xpRequired: number) => userXP >= xpRequired;
   const isCompleted = (id: number) => completedInternships.some(c => c.id === id);
   const getCompletionDate = (id: number) => completedInternships.find(c => c.id === id)?.completionDate || "";
+  const isEnrolled = (id: number) => enrolledIds.includes(id);
 
   const handleViewCertificate = (internship: (typeof internships)[0]) => {
     setSelectedInternship(internship);
@@ -253,6 +271,13 @@ export default function Internships() {
                             >
                               <Award className="w-4 h-4 mr-1" />
                               View Certificate
+                            </Button>
+                          ) : isEnrolled(internship.id) ? (
+                            <Button variant={internship.type === "paid" ? "gold" : "neon-green"} size="sm" asChild>
+                              <Link to={`/internships/dashboard-v2/${internship.id}`}>
+                                Open Dashboard
+                                <ChevronRight className="w-4 h-4" />
+                              </Link>
                             </Button>
                           ) : (
                             <Button variant={internship.type === "paid" ? "gold" : "neon-green"} size="sm" asChild>

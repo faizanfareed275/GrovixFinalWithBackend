@@ -12,8 +12,8 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ error?: string }>;
-  signup: (email: string, password: string, name: string) => Promise<{ error?: string }>;
+  login: (email: string, password: string) => Promise<{ error?: string; user?: User | null }>;
+  signup: (email: string, password: string, name: string) => Promise<{ error?: string; user?: User | null }>;
   logout: () => Promise<void>;
 }
 
@@ -29,6 +29,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : "http://localhost:4000";
 
   const apiUrl = (import.meta as any).env?.VITE_GROVIX_API_URL || defaultApiUrl;
+
+  const persistCurrentUser = (nextUser: User | null) => {
+    try {
+      if (!nextUser) {
+        localStorage.removeItem("youthxp_user");
+      } else {
+        localStorage.setItem("youthxp_user", JSON.stringify(nextUser));
+      }
+    } catch {
+    }
+  };
 
   const fetchMe = async (): Promise<User | null> => {
     try {
@@ -47,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (async () => {
       const me = await fetchMe();
       setUser(me);
+      persistCurrentUser(me);
       setIsLoading(false);
     })();
   }, []);
@@ -54,13 +66,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onProfileUpdated = async () => {
       const me = await fetchMe();
-      if (me) setUser(me);
+      if (me) {
+        setUser(me);
+        persistCurrentUser(me);
+      }
     };
     window.addEventListener("profile-updated", onProfileUpdated);
     return () => window.removeEventListener("profile-updated", onProfileUpdated);
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ error?: string }> => {
+  const login = async (
+    email: string,
+    password: string
+  ): Promise<{
+    error?: string;
+    user?: User | null;
+  }> => {
     try {
       const res = await fetch(`${apiUrl}/auth/login`, {
         method: "POST",
@@ -88,13 +109,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!nextUser) nextUser = await fetchMe();
       if (!nextUser) return { error: "Login failed" };
       setUser(nextUser);
-      return {};
+      persistCurrentUser(nextUser);
+      return { user: nextUser };
     } catch {
       return { error: "Login failed" };
     }
   };
 
-  const signup = async (email: string, password: string, name: string): Promise<{ error?: string }> => {
+  const signup = async (
+    email: string,
+    password: string,
+    name: string
+  ): Promise<{
+    error?: string;
+    user?: User | null;
+  }> => {
     try {
       const res = await fetch(`${apiUrl}/auth/signup`, {
         method: "POST",
@@ -126,7 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!nextUser) nextUser = await fetchMe();
       if (!nextUser) return { error: "Signup failed" };
       setUser(nextUser);
-      return {};
+      persistCurrentUser(nextUser);
+      return { user: nextUser };
     } catch {
       return { error: "Signup failed" };
     }

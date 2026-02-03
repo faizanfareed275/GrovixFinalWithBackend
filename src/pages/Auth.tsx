@@ -30,12 +30,13 @@ export default function Auth() {
 
     try {
       if (isLogin) {
-        const { error } = await login(email, password);
+        const { error, user } = await login(email, password);
         if (error) {
           toast.error(error);
         } else {
           toast.success("Welcome back!");
-          navigate("/profile");
+          const role = String((user as any)?.role || "").toLowerCase();
+          navigate(role === "admin" ? "/admin/dashboard" : "/profile");
         }
       } else {
         if (!name.trim()) {
@@ -43,12 +44,13 @@ export default function Auth() {
           setIsLoading(false);
           return;
         }
-        const { error } = await signup(email, password, name);
+        const { error, user } = await signup(email, password, name);
         if (error) {
           toast.error(error);
         } else {
           toast.success("Account created successfully!");
-          navigate("/profile");
+          const role = String((user as any)?.role || "").toLowerCase();
+          navigate(role === "admin" ? "/admin/dashboard" : "/profile");
         }
       }
     } finally {

@@ -11,6 +11,8 @@ type AuthUser = {
   email: string;
   name: string;
   avatar: string;
+  role?: string;
+  isAdmin?: boolean;
 };
 
 export function getCurrentUser(): AuthUser | null {
@@ -26,6 +28,9 @@ export function getCurrentUser(): AuthUser | null {
 export function isAdminUser(): boolean {
   const current = getCurrentUser();
   if (!current?.email) return false;
+
+  if (current.isAdmin) return true;
+  if ((current.role || "").toLowerCase() === "admin") return true;
 
   const normalizedEmail = current.email.trim().toLowerCase();
   if (normalizedEmail === "admin@grovix.com") return true;

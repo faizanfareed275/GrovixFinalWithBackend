@@ -1044,7 +1044,7 @@ export default function Profile() {
                             </div>
                             <Button
                               variant="outline"
-                              onClick={() => navigate(`/internships/dashboard/${enrolled.id}`)}
+                              onClick={() => navigate(`/internships/dashboard-v2/${enrolled.id}`)}
                             >
                               Open Dashboard
                               <ChevronRight className="w-4 h-4" />
