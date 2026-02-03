@@ -297,6 +297,10 @@ function useChatInternal(userId: string | null) {
       window.dispatchEvent(new CustomEvent("new-message", { detail: { deleted: true, conversationId, messageId } }));
     });
 
+    s.on("chat:typing", (payload: any) => {
+      window.dispatchEvent(new CustomEvent("chat:typing", { detail: payload }));
+    });
+
     s.on("chat:call:incoming", (payload: any) => {
       window.dispatchEvent(new CustomEvent("chat:call:incoming", { detail: payload }));
     });
@@ -629,6 +633,15 @@ function useChatInternal(userId: string | null) {
     await loadConversations().catch(() => {});
   }, [userId, loadConversations]);
 
+  const sendTyping = useCallback(
+    (conversationId: string, isTyping: boolean) => {
+      const s = socketRef.current;
+      if (!s || !s.connected) return;
+      s.emit("chat:typing", { conversationId, isTyping });
+    },
+    []
+  );
+
   const startCall = useCallback(async (conversationId: string, callType: "audio" | "video") => {
     const s = socketRef.current;
     if (!s || !s.connected) throw new Error("socket_not_connected");
@@ -667,6 +680,7 @@ function useChatInternal(userId: string | null) {
     sendMessage,
     editMessage,
     deleteMessage,
+    sendTyping,
     startCall,
     respondToCall,
     getTotalUnreadCount,

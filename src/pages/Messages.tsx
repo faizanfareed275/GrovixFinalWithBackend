@@ -171,6 +171,7 @@ export default function Messages() {
     promoteMember,
     reshareRoomKey,
     sendMessage,
+    sendTyping,
     editMessage,
     deleteMessage,
     startCall,
@@ -221,6 +222,10 @@ export default function Messages() {
   const [pinsOpen, setPinsOpen] = useState(false);
   const [pins, setPins] = useState<{ messageId: string; pinnedBy: string; createdAt: string }[]>([]);
 
+  const [typingFromUserIds, setTypingFromUserIds] = useState<Record<string, true>>({});
+  const typingStopTimerRef = useRef<number | null>(null);
+  const typingSelfTimerRef = useRef<number | null>(null);
+
   const messageRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
 
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -236,6 +241,51 @@ export default function Messages() {
       openConversation(selectedConversation.id);
     }
   }, [selectedConversation, openConversation]);
+
+  useEffect(() => {
+    setTypingFromUserIds({});
+  }, [selectedConversation?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
+      if (typingSelfTimerRef.current) window.clearTimeout(typingSelfTimerRef.current);
+      typingSelfTimerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onTyping = (e: Event) => {
+      const detail = (e as CustomEvent).detail as unknown;
+      if (!detail || typeof detail !== "object") return;
+      const d = detail as { conversationId?: unknown; userId?: unknown; isTyping?: unknown };
+      const conversationId = String(d.conversationId || "");
+      const fromUserId = String(d.userId || "");
+      const isTyping = !!d.isTyping;
+
+      if (!selectedConversation?.id) return;
+      if (conversationId !== String(selectedConversation.id)) return;
+      if (!fromUserId || fromUserId === String(user?.id || "")) return;
+
+      setTypingFromUserIds((prev) => {
+        const next = { ...prev };
+        if (isTyping) next[fromUserId] = true;
+        else delete next[fromUserId];
+        return next;
+      });
+
+      if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = window.setTimeout(() => {
+        setTypingFromUserIds({});
+      }, 2500);
+    };
+
+    window.addEventListener("chat:typing", onTyping);
+    return () => {
+      window.removeEventListener("chat:typing", onTyping);
+    };
+  }, [selectedConversation?.id, user?.id]);
 
   useEffect(() => {
     const conversationId = selectedConversation?.id;
@@ -425,6 +475,7 @@ export default function Messages() {
       }
     });
     setNewMessage("");
+    sendTyping(selectedConversation.id, false);
     setShowEmojiPicker(false);
   };
 
@@ -1146,6 +1197,10 @@ export default function Messages() {
                       )}
                     </AnimatePresence>
 
+                    {Object.keys(typingFromUserIds).length > 0 && (
+                      <div className="text-xs text-muted-foreground">Typing...</div>
+                    )}
+
                     <div className="flex items-center gap-2">
                       <label className="p-2 hover:bg-muted rounded-lg transition-colors text-muted-foreground hover:text-primary cursor-pointer">
                         <Image className="w-5 h-5" />
@@ -1180,7 +1235,20 @@ export default function Messages() {
                       </button>
                       <Input
                         value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setNewMessage(v);
+                          if (!selectedConversation?.id) return;
+                          if (!v.trim()) {
+                            sendTyping(selectedConversation.id, false);
+                            return;
+                          }
+                          sendTyping(selectedConversation.id, true);
+                          if (typingSelfTimerRef.current) window.clearTimeout(typingSelfTimerRef.current);
+                          typingSelfTimerRef.current = window.setTimeout(() => {
+                            sendTyping(selectedConversation.id, false);
+                          }, 1400);
+                        }}
                         placeholder="Type a message..."
                         className="flex-1 bg-muted/50"
                         onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}

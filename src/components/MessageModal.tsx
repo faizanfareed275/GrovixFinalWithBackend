@@ -150,7 +150,7 @@ export function MessageModal({
 }: MessageModalProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { activeMessages, createDirectConversation, openConversation, sendMessage, editMessage, deleteMessage, startCall, respondToCall } = useChat(user?.id || null);
+  const { activeMessages, createDirectConversation, openConversation, sendMessage, sendTyping, editMessage, deleteMessage, startCall, respondToCall } = useChat(user?.id || null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   
   const [newMessage, setNewMessage] = useState("");
@@ -161,6 +161,7 @@ export function MessageModal({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingSelfTimerRef = useRef<number | null>(null);
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<string>("");
@@ -208,6 +209,13 @@ export function MessageModal({
   useEffect(() => {
     scrollToBottom();
   }, [activeMessages]);
+
+  useEffect(() => {
+    return () => {
+      if (typingSelfTimerRef.current) window.clearTimeout(typingSelfTimerRef.current);
+      typingSelfTimerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!conversationId) {
@@ -272,6 +280,7 @@ export function MessageModal({
       }
     });
     setNewMessage("");
+    sendTyping(conversationId, false);
     setShowEmojiPicker(false);
   };
 
@@ -847,7 +856,20 @@ export function MessageModal({
                     </button>
                     <Input
                       value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setNewMessage(v);
+                        if (!conversationId) return;
+                        if (!v.trim()) {
+                          sendTyping(conversationId, false);
+                          return;
+                        }
+                        sendTyping(conversationId, true);
+                        if (typingSelfTimerRef.current) window.clearTimeout(typingSelfTimerRef.current);
+                        typingSelfTimerRef.current = window.setTimeout(() => {
+                          sendTyping(conversationId, false);
+                        }, 1400);
+                      }}
                       placeholder="Type a message..."
                       className="flex-1 bg-muted/50"
                       onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
