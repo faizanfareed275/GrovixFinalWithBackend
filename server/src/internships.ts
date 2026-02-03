@@ -53,8 +53,34 @@ async function ensureInternshipCode(internshipId: number): Promise<string> {
   return code;
 }
 
-function pdfPlaceholderBytes() {
-  const raw = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<<>>\n%%EOF\n";
+function pdfPlaceholderBytes(label: string = "PLACEHOLDER PDF") {
+  const safeLabel = label.replace(/[()\\]/g, "");
+  const content = `BT /F1 28 Tf 120 420 Td (${safeLabel}) Tj ET\n`;
+  const contentLength = Buffer.byteLength(content, "utf8");
+
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    `4 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}endstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+
+  let offset = Buffer.byteLength("%PDF-1.4\n", "utf8");
+  const offsets = [0];
+  for (const obj of objects) {
+    offsets.push(offset);
+    offset += Buffer.byteLength(obj, "utf8");
+  }
+
+  const xrefOffset = offset;
+  const xrefLines = ["xref\n", `0 ${offsets.length}\n`, "0000000000 65535 f \n"];
+  for (let i = 1; i < offsets.length; i += 1) {
+    xrefLines.push(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+
+  const trailer = `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  const raw = `%PDF-1.4\n${objects.join("")}${xrefLines.join("")}${trailer}`;
   return Buffer.from(raw, "utf8");
 }
 
@@ -168,7 +194,7 @@ async function maybeIssueLegacyCertificate(internshipId: number, userId: string)
   return cert;
 }
 
-async function lockExpiredAssignments(enrollmentId: string, now: Date = new Date()) {
+export async function lockExpiredAssignments(enrollmentId: string, now: Date = new Date()) {
   await prisma.internshipTaskAssignment.updateMany({
     where: {
       enrollmentId,
@@ -197,7 +223,7 @@ async function lockExpiredAssignments(enrollmentId: string, now: Date = new Date
   });
 }
 
-async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) {
+export async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) {
   const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) return null;
   if ((enrollment as any).status === "TERMINATED") return null;
@@ -300,7 +326,7 @@ async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) {
   return cert;
 }
 
-async function seedAssignmentsForEnrollment(enrollmentId: string) {
+export async function seedAssignmentsForEnrollment(enrollmentId: string) {
   const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) return;
 
@@ -358,7 +384,7 @@ async function seedAssignmentsForEnrollment(enrollmentId: string) {
   } as any);
 }
 
-async function recomputeAssignmentScheduleForEnrollment(enrollmentId: string) {
+export async function recomputeAssignmentScheduleForEnrollment(enrollmentId: string) {
   const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) return;
 
@@ -416,7 +442,7 @@ const badgeOrder: Record<string, number> = {
   EXPERT: 3,
 };
 
-async function evaluateAndPromoteBadge(enrollmentId: string, actorUserId?: string | null) {
+export async function evaluateAndPromoteBadge(enrollmentId: string, actorUserId?: string | null) {
   const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) return null;
 
@@ -1356,6 +1382,102 @@ router.post("/:id/v2/assignments/:assignmentId/start", requireAuth, async (req: 
   return res.json({ ok: true, assignment: updated });
 });
 
+router.get("/:id/admin/v2/badge-rules", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+
+  const rows = await prisma.internshipBadgeRule.findMany({
+    where: { internshipId },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+
+  return res.json({ rules: rows });
+});
+
+router.post("/:id/admin/v2/badge-rules", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+
+  const level = String(req.body?.level || "BEGINNER").toUpperCase();
+  const minCompletionPercent = Math.max(0, Math.min(100, Number(req.body?.minCompletionPercent || 0) || 0));
+  const minXp = Math.max(0, Number(req.body?.minXp || 0) || 0);
+  const sortOrder = Number(req.body?.sortOrder || 0) || 0;
+
+  const allowed = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
+  if (!allowed.includes(level)) return res.status(400).json({ error: "invalid_level" });
+
+  const existing = await prisma.internshipBadgeRule.findUnique({
+    where: { internshipId_level: { internshipId, level: level as any } },
+  });
+  if (existing) return res.status(409).json({ error: "rule_exists" });
+
+  const rule = await prisma.internshipBadgeRule.create({
+    data: {
+      internshipId,
+      level: level as any,
+      minCompletionPercent,
+      minXp,
+      sortOrder,
+    } as any,
+  });
+
+  return res.json({ ok: true, rule });
+});
+
+router.put("/:id/admin/v2/badge-rules/:ruleId", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  const ruleId = String(req.params.ruleId || "");
+  if (!Number.isFinite(internshipId) || !ruleId) return res.status(400).json({ error: "invalid_request" });
+
+  const rule = await prisma.internshipBadgeRule.findUnique({ where: { id: ruleId } });
+  if (!rule || rule.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const patch: any = {};
+  if (req.body?.level !== undefined) {
+    const level = String(req.body.level || "").toUpperCase();
+    const allowed = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
+    if (!allowed.includes(level)) return res.status(400).json({ error: "invalid_level" });
+    patch.level = level as any;
+  }
+  if (req.body?.minCompletionPercent !== undefined) {
+    patch.minCompletionPercent = Math.max(0, Math.min(100, Number(req.body.minCompletionPercent || 0) || 0));
+  }
+  if (req.body?.minXp !== undefined) {
+    patch.minXp = Math.max(0, Number(req.body.minXp || 0) || 0);
+  }
+  if (req.body?.sortOrder !== undefined) {
+    patch.sortOrder = Number(req.body.sortOrder || 0) || 0;
+  }
+
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no_changes" });
+
+  if (patch.level && patch.level !== rule.level) {
+    const existing = await prisma.internshipBadgeRule.findUnique({
+      where: { internshipId_level: { internshipId, level: patch.level } },
+    });
+    if (existing) return res.status(409).json({ error: "rule_exists" });
+  }
+
+  const updated = await prisma.internshipBadgeRule.update({
+    where: { id: ruleId },
+    data: patch,
+  });
+
+  return res.json({ ok: true, rule: updated });
+});
+
+router.delete("/:id/admin/v2/badge-rules/:ruleId", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  const ruleId = String(req.params.ruleId || "");
+  if (!Number.isFinite(internshipId) || !ruleId) return res.status(400).json({ error: "invalid_request" });
+
+  const rule = await prisma.internshipBadgeRule.findUnique({ where: { id: ruleId } });
+  if (!rule || rule.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  await prisma.internshipBadgeRule.delete({ where: { id: ruleId } });
+  return res.json({ ok: true });
+});
+
 router.post("/:id/admin/v2/assignments/:assignmentId/reopen", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   const assignmentId = String(req.params.assignmentId || "");
@@ -1575,6 +1697,63 @@ router.post("/:id/admin/v2/templates", requireAdmin, async (req, res) => {
   });
 
   return res.json({ ok: true, template: t });
+});
+
+router.put("/:id/admin/v2/templates/:templateId", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  const templateId = String(req.params.templateId || "");
+  if (!Number.isFinite(internshipId) || !templateId) return res.status(400).json({ error: "invalid_request" });
+
+  const template = await prisma.internshipTaskTemplate.findUnique({ where: { id: templateId } });
+  if (!template || template.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const patch: any = {};
+  if (req.body?.badgeLevel !== undefined) {
+    const badgeLevel = String(req.body.badgeLevel || "").toUpperCase();
+    const allowed = ["BEGINNER", "INTERMEDIATE", "ADVANCED", "EXPERT"];
+    if (!allowed.includes(badgeLevel)) return res.status(400).json({ error: "invalid_badge" });
+    patch.badgeLevel = badgeLevel as any;
+  }
+  if (req.body?.title !== undefined) {
+    const title = String(req.body.title || "").trim();
+    if (!title) return res.status(400).json({ error: "invalid_request" });
+    patch.title = title;
+  }
+  if (req.body?.description !== undefined) patch.description = String(req.body.description || "");
+  if (req.body?.xpReward !== undefined) patch.xpReward = Number(req.body.xpReward || 0) || 0;
+  if (req.body?.sortOrder !== undefined) patch.sortOrder = Number(req.body.sortOrder || 0) || 0;
+  if (req.body?.unlockOffsetDays !== undefined) {
+    const val = req.body.unlockOffsetDays;
+    patch.unlockOffsetDays = val === "" || val === null ? null : Number(val);
+  }
+  if (req.body?.timePeriodDays !== undefined) {
+    const val = req.body.timePeriodDays;
+    patch.timePeriodDays = val === "" || val === null ? null : Number(val);
+  }
+  if (req.body?.maxAttempts !== undefined) patch.maxAttempts = Math.max(1, Number(req.body.maxAttempts || 1) || 1);
+  if (req.body?.autoPass !== undefined) patch.autoPass = !!req.body.autoPass;
+  if (req.body?.rubricJson !== undefined) patch.rubricJson = req.body.rubricJson;
+
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no_changes" });
+
+  const updated = await prisma.internshipTaskTemplate.update({
+    where: { id: templateId },
+    data: patch,
+  });
+
+  return res.json({ ok: true, template: updated });
+});
+
+router.delete("/:id/admin/v2/templates/:templateId", requireAdmin, async (req, res) => {
+  const internshipId = Number(req.params.id);
+  const templateId = String(req.params.templateId || "");
+  if (!Number.isFinite(internshipId) || !templateId) return res.status(400).json({ error: "invalid_request" });
+
+  const template = await prisma.internshipTaskTemplate.findUnique({ where: { id: templateId } });
+  if (!template || template.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  await prisma.internshipTaskTemplate.delete({ where: { id: templateId } });
+  return res.json({ ok: true });
 });
 
 router.post("/:id/admin/v2/attempts/:attemptId/grade", requireAdmin, async (req: any, res) => {

@@ -18,6 +18,7 @@ import jobsRouter from "./jobs";
 import certificatesRouter from "./certificates";
 import filesRouter from "./files";
 import { startEventEmailScheduler } from "./eventEmailScheduler";
+import { startInternshipScheduler } from "./internshipScheduler";
 import { prisma } from "./db";
 
 dotenv.config({ path: "../.env" });
@@ -62,6 +63,7 @@ app.get("/health", (_req, res) => {
 });
 
 startEventEmailScheduler();
+startInternshipScheduler();
 
 function parseCookies(header: string | undefined) {
   const out: Record<string, string> = {};

@@ -33,7 +33,7 @@ export function Navbar() {
   return (
     <>
       {/* Desktop/Tablet Top Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 hidden md:block">
+      <nav className="fixed top-0 left-0 right-0 z-50 hidden lg:block">
         <div className="glass-card mx-4 mt-4 rounded-2xl border border-border">
           <div className="container mx-auto px-4">
             <div className="flex items-center justify-between h-16">
@@ -59,7 +59,7 @@ export function Navbar() {
                       key={item.name}
                       to={item.href}
                       className={cn(
-                        "relative px-4 py-2 rounded-lg font-medium text-sm transition-all duration-300 flex items-center gap-2",
+                        "relative px-2 xl:px-4 py-2 rounded-lg font-medium text-xs xl:text-sm transition-all duration-300 flex items-center gap-2",
                         isActive
                           ? "text-primary"
                           : "text-muted-foreground hover:text-foreground"
@@ -80,8 +80,8 @@ export function Navbar() {
               </div>
 
               {/* Desktop Actions */}
-              <div className="flex items-center gap-2">
-                <Link to="/messages" className="relative p-2 hover:bg-muted rounded-lg transition-colors">
+              <div className="flex items-center gap-1 xl:gap-2">
+                <Link to="/messages" className="relative p-1.5 xl:p-2 hover:bg-muted rounded-lg transition-colors">
                   <MessageCircle className="w-5 h-5" />
                   {unreadMessages > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-destructive text-destructive-foreground text-xs font-bold rounded-full flex items-center justify-center animate-pulse">
@@ -92,9 +92,9 @@ export function Navbar() {
                 <NotificationDropdown />
                 <ThemeToggle />
                 <Link to="/profile">
-                  <Button variant="ghost" size="sm" className="gap-2">
+                  <Button variant="ghost" size="sm" className="gap-2" title="Profile">
                     <User className="w-4 h-4" />
-                    Profile
+                    <span className="hidden xl:inline">Profile</span>
                   </Button>
                 </Link>
                 {user ? (
@@ -105,8 +105,11 @@ export function Navbar() {
                       await logout();
                       navigate("/auth");
                     }}
+                    title="Logout"
+                    className="gap-2"
                   >
-                    Logout
+                    <LogOut className="w-4 h-4 xl:hidden" />
+                    <span className="hidden xl:inline">Logout</span>
                   </Button>
                 ) : (
                   <Link to="/auth">
@@ -122,7 +125,7 @@ export function Navbar() {
       </nav>
 
       {/* Mobile Top Bar (minimal) */}
-      <nav className="fixed top-0 left-0 right-0 z-50 md:hidden">
+      <nav className="fixed top-0 left-0 right-0 z-50 lg:hidden">
         <div className="glass-card mx-3 mt-3 rounded-xl border border-border">
           <div className="flex items-center justify-between h-14 px-4">
             {/* Logo */}
@@ -171,7 +174,7 @@ export function Navbar() {
       </nav>
 
       {/* Mobile Bottom Tab Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 lg:hidden">
         <div className="glass-card border-t border-border">
           <div className="flex items-center justify-around h-16 px-2">
             {navItems.map((item) => {

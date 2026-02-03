@@ -29,6 +29,7 @@ import AdminInternshipV2Batches from "@/admin/pages/AdminInternshipV2Batches";
 import AdminInternshipV2Applications from "@/admin/pages/AdminInternshipV2Applications";
 import AdminInternshipV2Enrollments from "@/admin/pages/AdminInternshipV2Enrollments";
 import AdminInternshipV2Assignments from "@/admin/pages/AdminInternshipV2Assignments";
+import AdminInternshipV2BadgeRules from "@/admin/pages/AdminInternshipV2BadgeRules";
 import Index from "./pages/Index";
 import Challenges from "./pages/Challenges";
 import ChallengeWorkspace from "./pages/ChallengeWorkspace";
@@ -94,6 +95,7 @@ const App = () => (
                   <Route path="internship-tasks" element={<AdminInternshipTasks />} />
                   <Route path="internship-submissions" element={<AdminInternshipSubmissions />} />
                   <Route path="internship-v2-templates" element={<AdminInternshipV2Templates />} />
+                  <Route path="internship-v2-badge-rules" element={<AdminInternshipV2BadgeRules />} />
                   <Route path="internship-v2-assignments" element={<AdminInternshipV2Assignments />} />
                   <Route path="internship-v2-attempts" element={<AdminInternshipV2Attempts />} />
                   <Route path="internship-v2-batches" element={<AdminInternshipV2Batches />} />
