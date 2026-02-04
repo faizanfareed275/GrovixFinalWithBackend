@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "./db";
-import { requireAuth } from "./middleware/auth";
+import { requireAdmin, requireAuth } from "./middleware/auth";
 import jwt from "jsonwebtoken";
 import { Prisma } from "@prisma/client";
 
@@ -42,6 +42,15 @@ type CommentNode = {
 function asStringArray(v: any): string[] {
   if (!Array.isArray(v)) return [];
   return v.map((x) => String(x)).filter(Boolean);
+}
+
+function isDbJsonNull(v: any): boolean {
+  if (v === null || v === undefined) return true;
+  try {
+    if (typeof v === "object" && v !== null && "toJSON" in v) return false;
+  } catch {
+  }
+  return false;
 }
 
 function normalizePollForViewer(poll: any, viewerId: string | null) {
@@ -224,6 +233,106 @@ function initialsFromName(name: string) {
     .toUpperCase();
 }
 
+function countTreeNodes(nodes: any): number {
+  const list = Array.isArray(nodes) ? nodes : [];
+  return list.reduce((sum, n) => sum + 1 + countTreeNodes((n as any)?.replies), 0);
+}
+
+async function createAuditLog(actorUserId: string, action: string, entityType: string, entityId: string | null, before: any, after: any) {
+  try {
+    await (prisma as any).auditLog.create({
+      data: {
+        actorUserId,
+        action,
+        entityType,
+        entityId: entityId || null,
+        before: before === undefined ? Prisma.JsonNull : before,
+        after: after === undefined ? Prisma.JsonNull : after,
+      },
+    });
+  } catch {
+  }
+}
+
+async function createCommunityNotification(userId: string, payload: { type: string; title?: string | null; body: string; link?: string | null; meta?: any }) {
+  try {
+    await (prisma as any).communityNotification.create({
+      data: {
+        userId,
+        type: String(payload.type || ""),
+        title: payload.title ? String(payload.title) : null,
+        body: String(payload.body || ""),
+        link: payload.link ? String(payload.link) : null,
+        meta: payload.meta ?? Prisma.JsonNull,
+      },
+    });
+    broadcastCommunityEvent("notifications_changed", { userId });
+  } catch {
+  }
+}
+
+function requireNonEmptyString(v: any, maxLen: number) {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return null;
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
+}
+
+function normalizeSeverity(raw: any) {
+  const s = String(raw || "").toUpperCase();
+  if (s === "LOW" || s === "MEDIUM" || s === "HIGH" || s === "CRITICAL") return s;
+  return "MEDIUM";
+}
+
+function normalizeReportTargetType(raw: any) {
+  const t = String(raw || "").toUpperCase();
+  if (t === "POST" || t === "POST_COMMENT" || t === "DISCUSSION" || t === "DISCUSSION_REPLY" || t === "USER") return t;
+  return null;
+}
+
+function normalizeModerationActionType(raw: any) {
+  const t = String(raw || "").toUpperCase();
+  if (t === "REMOVE_CONTENT" || t === "RESTORE_CONTENT" || t === "ISSUE_WARNING" || t === "TEMP_BAN" || t === "PERM_BAN") return t;
+  return null;
+}
+
+function findNodeInTree(nodes: any, nodeId: number): any | null {
+  const list = Array.isArray(nodes) ? nodes : [];
+  for (const n of list) {
+    if (!n || typeof n !== "object") continue;
+    if (Number((n as any).id) === nodeId) return n;
+    const child = findNodeInTree((n as any).replies, nodeId);
+    if (child) return child;
+  }
+  return null;
+}
+
+function updateNodeInTreeGeneric(nodes: any, nodeId: number, updater: (n: any) => any): { next: any[]; updated: boolean; before?: any; after?: any } {
+  let updated = false;
+  let before: any = undefined;
+  let after: any = undefined;
+  const list = Array.isArray(nodes) ? nodes : [];
+  const next = list.map((n) => {
+    if (!n || typeof n !== "object") return n;
+    if (Number((n as any).id) === nodeId) {
+      updated = true;
+      before = n;
+      after = updater(n);
+      return after;
+    }
+    if (Array.isArray((n as any).replies) && (n as any).replies.length) {
+      const child = updateNodeInTreeGeneric((n as any).replies, nodeId, updater);
+      if (child.updated) {
+        updated = true;
+        before = child.before;
+        after = child.after;
+        return { ...n, replies: child.next };
+      }
+    }
+    return n;
+  });
+  return { next, updated, before, after };
+}
+
 function dateOnlyString(date: Date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
@@ -306,12 +415,16 @@ router.get("/events", requireAuth, async (req: any, res) => {
 router.get("/posts", async (req, res) => {
   const auth = getOptionalAuth(req);
   const viewerId = auth?.userId || null;
+  const canSeeRemoved = auth?.role === "ADMIN";
+  const includeRemoved = canSeeRemoved && (String(req.query?.includeRemoved || "") === "1" || String(req.query?.includeRemoved || "") === "true");
   const onlySaved = String(req.query?.saved || "") === "1" || String(req.query?.saved || "") === "true";
 
   const filterUserId = String(req.query?.userId || "").trim();
 
   const items = await prisma.communityPost.findMany({
-    where: filterUserId ? { userId: filterUserId } : undefined,
+    where: filterUserId
+      ? ({ userId: filterUserId, ...(includeRemoved ? {} : { status: "ACTIVE" }) } as any)
+      : ((includeRemoved ? {} : { status: "ACTIVE" }) as any),
     orderBy: { createdAt: "desc" },
   });
 
@@ -472,6 +585,7 @@ router.patch("/posts/:id", requireAuth, async (req: any, res) => {
 
   const existing = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!existing) return res.status(404).json({ error: "not_found" });
+  if ((existing as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
   if (!canEditOwnerContent(req, existing.userId)) return res.status(403).json({ error: "forbidden" });
 
   const content = typeof req.body?.content === "string" ? String(req.body.content) : undefined;
@@ -543,6 +657,7 @@ router.post("/posts/:id/like", requireAuth, async (req: any, res) => {
   const actorUserId = req.auth.userId as string;
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const likesBy = asStringArray((post as any).likesBy);
   const next = likesBy.includes(actorUserId) ? likesBy.filter((id) => id !== actorUserId) : [...likesBy, actorUserId];
@@ -563,6 +678,7 @@ router.post("/posts/:id/save", requireAuth, async (req: any, res) => {
   const actorUserId = req.auth.userId as string;
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const savesBy = asStringArray((post as any).savesBy);
   const next = savesBy.includes(actorUserId)
@@ -587,6 +703,7 @@ router.post("/posts/:id/reaction", requireAuth, async (req: any, res) => {
 
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const reactionsBy = (post as any).reactionsBy && typeof (post as any).reactionsBy === "object" ? { ...(post as any).reactionsBy } : {};
   const current = reactionsBy[actorUserId] ? String(reactionsBy[actorUserId]) : null;
@@ -619,12 +736,13 @@ router.post("/posts/:id/poll/vote", requireAuth, async (req: any, res) => {
     return res.status(400).json({ error: "invalid_id" });
   }
 
-  const actorUserId = req.auth.userId as string;
   const optionId = Number(req.body?.optionId);
   if (!Number.isFinite(optionId)) return res.status(400).json({ error: "invalid_option" });
 
+  const actorUserId = req.auth.userId as string;
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const currentPoll = (post as any).poll;
   if (!currentPoll || typeof currentPoll !== "object") return res.status(400).json({ error: "no_poll" });
@@ -679,6 +797,7 @@ router.post("/posts/:id/comments", requireAuth, async (req: any, res) => {
 
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const node: CommentNode = {
     id: Date.now(),
@@ -714,6 +833,7 @@ router.post("/posts/:id/comments/:commentId/like", requireAuth, async (req: any,
   const actorUserId = req.auth.userId as string;
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const current = (Array.isArray(post.comments) ? post.comments : []) as any as CommentNode[];
   const upd = updateNodeInTree(current, commentId, (n) => {
@@ -742,6 +862,7 @@ router.delete("/posts/:id/comments/:commentId", requireAuth, async (req: any, re
   const actorUserId = req.auth.userId as string;
   const post = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   const current = (Array.isArray(post.comments) ? post.comments : []) as any as CommentNode[];
   const del = deleteNodeFromTree(current, commentId);
@@ -835,6 +956,8 @@ router.delete("/posts/:id", requireAuth, async (req, res) => {
   const existing = await prisma.communityPost.findUnique({ where: { legacyId } });
   if (!existing) return res.json({ ok: true });
 
+  if ((existing as any).status === "REMOVED") return res.json({ ok: true });
+
   if (!canEditOwnerContent(req, existing.userId)) return res.status(403).json({ error: "forbidden" });
 
   await prisma.communityPost.delete({ where: { legacyId } });
@@ -849,6 +972,10 @@ router.post("/posts/:id/share", async (req, res) => {
   } catch {
     return res.status(400).json({ error: "invalid_id" });
   }
+
+  const post = await prisma.communityPost.findUnique({ where: { legacyId } });
+  if (!post) return res.status(404).json({ error: "not_found" });
+  if ((post as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   await prisma.communityPost.updateMany({ where: { legacyId }, data: { shares: { increment: 1 } } });
   broadcastCommunityEvent("posts_changed", { postId: Number(legacyId), action: "shared" });
@@ -990,7 +1117,13 @@ router.get("/stats", async (_req, res) => {
 
 // -------- Discussions --------
 router.get("/discussions", async (_req, res) => {
+  const req: any = _req;
+  const auth = getOptionalAuth(req);
+  const canSeeRemoved = auth?.role === "ADMIN";
+  const includeRemoved = canSeeRemoved && (String(req.query?.includeRemoved || "") === "1" || String(req.query?.includeRemoved || "") === "true");
+
   const items = await prisma.communityDiscussion.findMany({
+    where: (includeRemoved ? {} : { status: "ACTIVE" }) as any,
     orderBy: { createdAt: "desc" },
   });
 
@@ -1036,6 +1169,9 @@ router.get("/discussions", async (_req, res) => {
       replies: mapReplyTree((d as any).replies),
       views: d.views,
       hot: d.hot,
+      pinned: (d as any).pinned ?? false,
+      locked: (d as any).locked ?? false,
+      archived: (d as any).archived ?? false,
       createdAt: d.createdAt.toISOString(),
       updatedAt: d.updatedAt.toISOString(),
     };
@@ -1051,6 +1187,10 @@ router.post("/discussions/:id/view", async (req, res) => {
   } catch {
     return res.status(400).json({ error: "invalid_id" });
   }
+
+  const discussion = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+  if (!discussion) return res.status(404).json({ error: "not_found" });
+  if ((discussion as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
 
   await prisma.communityDiscussion.updateMany({ where: { legacyId }, data: { views: { increment: 1 } } });
   return res.json({ ok: true });
@@ -1069,6 +1209,7 @@ router.put("/discussions", requireAuth, async (req: any, res) => {
     }
 
     const existing = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+    if (existing && (existing as any).status === "REMOVED") continue;
 
     if (!existing) {
       await prisma.communityDiscussion.create({
@@ -1093,6 +1234,9 @@ router.put("/discussions", requireAuth, async (req: any, res) => {
     const updateData: any = {
       replies: d.replies || [],
       hot: !!d.hot,
+      pinned: !!d.pinned,
+      locked: !!d.locked,
+      archived: !!d.archived,
     };
 
     if (canEdit) {
@@ -1120,9 +1264,646 @@ router.delete("/discussions/:id", requireAuth, async (req, res) => {
   const existing = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
   if (!existing) return res.json({ ok: true });
 
+  if ((existing as any).status === "REMOVED") return res.json({ ok: true });
+
   if (!canEditOwnerContent(req, existing.userId)) return res.status(403).json({ error: "forbidden" });
 
   await prisma.communityDiscussion.delete({ where: { legacyId } });
+  return res.json({ ok: true });
+});
+
+// -------- Guidelines & Categories --------
+router.get("/guidelines", async (_req, res) => {
+  const db = prisma as any;
+  const items = await db.communityGuideline.findMany({
+    where: { status: "PUBLISHED" },
+    orderBy: { publishedAt: "desc" },
+  });
+  return res.json({ guidelines: items.map((g: any) => ({ id: g.id, slug: g.slug, title: g.title, content: g.content, publishedAt: g.publishedAt ? new Date(g.publishedAt).toISOString() : null })) });
+});
+
+router.get("/categories", async (_req, res) => {
+  const db = prisma as any;
+  const items = await db.communityDiscussionCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
+  return res.json({ categories: items.map((c: any) => ({ id: c.id, name: c.name, slug: c.slug, sortOrder: c.sortOrder })) });
+});
+
+// -------- Notifications --------
+router.get("/notifications", requireAuth, async (req: any, res) => {
+  const userId = String(req.auth?.userId || "");
+  const unreadOnly = String(req.query?.unread || "") === "1" || String(req.query?.unread || "") === "true";
+  const db = prisma as any;
+  const items = await db.communityNotification.findMany({
+    where: { userId, ...(unreadOnly ? { readAt: null } : {}) },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return res.json({ notifications: items.map((n: any) => ({ id: n.id, type: n.type, title: n.title, body: n.body, link: n.link, meta: n.meta, readAt: n.readAt ? new Date(n.readAt).toISOString() : null, createdAt: new Date(n.createdAt).toISOString() })) });
+});
+
+router.post("/notifications/:id/read", requireAuth, async (req: any, res) => {
+  const userId = String(req.auth?.userId || "");
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+  await db.communityNotification.updateMany({ where: { id, userId, readAt: null }, data: { readAt: new Date() } });
+  return res.json({ ok: true });
+});
+
+router.post("/notifications/read-all", requireAuth, async (req: any, res) => {
+  const userId = String(req.auth?.userId || "");
+  const db = prisma as any;
+  await db.communityNotification.updateMany({ where: { userId, readAt: null }, data: { readAt: new Date() } });
+  return res.json({ ok: true });
+});
+
+router.delete("/notifications/:id", requireAuth, async (req: any, res) => {
+  const userId = String(req.auth?.userId || "");
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+  await db.communityNotification.deleteMany({ where: { id, userId } });
+  return res.json({ ok: true });
+});
+
+// -------- Reporting --------
+router.post("/reports", requireAuth, async (req: any, res) => {
+  const reporterUserId = String(req.auth?.userId || "");
+  const targetType = normalizeReportTargetType(req.body?.targetType);
+  if (!targetType) return res.status(400).json({ error: "invalid_target" });
+
+  const reason = requireNonEmptyString(req.body?.reason, 200);
+  if (!reason) return res.status(400).json({ error: "invalid_reason" });
+
+  const details = typeof req.body?.details === "string" ? String(req.body.details).trim().slice(0, 2000) : null;
+  const severity = normalizeSeverity(req.body?.severity);
+
+  const db = prisma as any;
+
+  let targetLegacyId: bigint | null = null;
+  let targetNodeId: bigint | null = null;
+  let targetUserId: string | null = null;
+
+  if (targetType === "USER") {
+    targetUserId = requireNonEmptyString(req.body?.targetUserId, 64);
+    if (!targetUserId) return res.status(400).json({ error: "invalid_target" });
+  } else {
+    try {
+      targetLegacyId = BigInt(req.body?.targetLegacyId ?? req.body?.targetId ?? "");
+    } catch {
+      return res.status(400).json({ error: "invalid_target" });
+    }
+
+    const nodeIdRaw = req.body?.targetNodeId ?? req.body?.nodeId;
+    if (nodeIdRaw !== undefined && nodeIdRaw !== null && String(nodeIdRaw) !== "") {
+      try {
+        targetNodeId = BigInt(String(nodeIdRaw));
+      } catch {
+        return res.status(400).json({ error: "invalid_target" });
+      }
+    }
+  }
+
+  let snapshot: any = null;
+  try {
+    if (targetType === "POST" || targetType === "POST_COMMENT") {
+      const post = await db.communityPost.findUnique({ where: { legacyId: targetLegacyId } });
+      if (!post) return res.status(404).json({ error: "not_found" });
+      targetUserId = String(post.userId);
+      if (targetType === "POST_COMMENT") {
+        const commentId = targetNodeId ? Number(targetNodeId) : NaN;
+        if (!Number.isFinite(commentId)) return res.status(400).json({ error: "invalid_target" });
+        const node = findNodeInTree((post as any).comments, commentId);
+        if (!node) return res.status(404).json({ error: "not_found" });
+        snapshot = { postLegacyId: Number(post.legacyId), comment: node };
+      } else {
+        snapshot = { postLegacyId: Number(post.legacyId), content: post.content, images: post.images };
+      }
+    }
+    if (targetType === "DISCUSSION" || targetType === "DISCUSSION_REPLY") {
+      const discussion = await db.communityDiscussion.findUnique({ where: { legacyId: targetLegacyId } });
+      if (!discussion) return res.status(404).json({ error: "not_found" });
+      targetUserId = String(discussion.userId);
+      if (targetType === "DISCUSSION_REPLY") {
+        const replyId = targetNodeId ? Number(targetNodeId) : NaN;
+        if (!Number.isFinite(replyId)) return res.status(400).json({ error: "invalid_target" });
+        const node = findNodeInTree((discussion as any).replies, replyId);
+        if (!node) return res.status(404).json({ error: "not_found" });
+        snapshot = { discussionLegacyId: Number(discussion.legacyId), reply: node };
+      } else {
+        snapshot = { discussionLegacyId: Number(discussion.legacyId), title: discussion.title, content: discussion.content, category: discussion.category };
+      }
+    }
+  } catch {
+    snapshot = null;
+  }
+
+  const created = await db.communityReport.create({
+    data: {
+      reporterUserId,
+      targetType,
+      targetLegacyId: targetLegacyId ?? null,
+      targetNodeId: targetNodeId ?? null,
+      targetUserId: targetUserId ?? null,
+      reason,
+      details,
+      severity,
+      status: "OPEN",
+      snapshot: snapshot ?? Prisma.JsonNull,
+    },
+  });
+
+  broadcastCommunityEvent("reports_changed", { reportId: created.id, action: "created" });
+  return res.json({ ok: true, report: { id: created.id, status: created.status } });
+});
+
+// -------- Admin: Moderation Dashboard, Reports, Guidelines, Categories --------
+router.get("/admin/dashboard", requireAdmin, async (_req, res) => {
+  const db = prisma as any;
+  const [totalPosts, totalDiscussions, removedPosts, removedDiscussions, openReports] = await Promise.all([
+    db.communityPost.count(),
+    db.communityDiscussion.count(),
+    db.communityPost.count({ where: { status: "REMOVED" } }),
+    db.communityDiscussion.count({ where: { status: "REMOVED" } }),
+    db.communityReport.count({ where: { status: "OPEN" } }),
+  ]);
+
+  const postsRows = await db.communityPost.findMany({ select: { comments: true, poll: true } });
+  const discussionsRows = await db.communityDiscussion.findMany({ select: { replies: true } });
+
+  const totalComments = postsRows.reduce((sum: number, p: any) => sum + countTreeNodes(p?.comments), 0);
+  const totalReplies = discussionsRows.reduce((sum: number, d: any) => sum + countTreeNodes(d?.replies), 0);
+  const totalPolls = postsRows.reduce((sum: number, p: any) => sum + (p?.poll && !isDbJsonNull(p.poll) ? 1 : 0), 0);
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const activeUsers7d = await db.user.count({ where: { lastSeenAt: { gte: sevenDaysAgo } } });
+
+  return res.json({
+    totals: {
+      posts: totalPosts,
+      discussions: totalDiscussions,
+      comments: totalComments,
+      discussionReplies: totalReplies,
+      polls: totalPolls,
+    },
+    moderation: {
+      activeUsers7d,
+      reportedOpen: openReports,
+      removedContent: Number(removedPosts) + Number(removedDiscussions),
+    },
+  });
+});
+
+router.get("/admin/reports", requireAdmin, async (req: any, res) => {
+  const db = prisma as any;
+  const status = String(req.query?.status || "OPEN").toUpperCase();
+  const targetType = req.query?.targetType ? normalizeReportTargetType(req.query.targetType) : null;
+  const severity = req.query?.severity ? normalizeSeverity(req.query.severity) : null;
+
+  const where: any = {};
+  if (status === "OPEN" || status === "RESOLVED" || status === "DISMISSED") where.status = status;
+  if (targetType) where.targetType = targetType;
+  if (severity) where.severity = severity;
+
+  const items = await db.communityReport.findMany({ where, orderBy: { createdAt: "desc" }, take: 200 });
+  return res.json({
+    reports: items.map((r: any) => ({
+      id: r.id,
+      reporterUserId: r.reporterUserId,
+      targetType: r.targetType,
+      targetLegacyId: r.targetLegacyId ? Number(r.targetLegacyId) : null,
+      targetNodeId: r.targetNodeId ? Number(r.targetNodeId) : null,
+      targetUserId: r.targetUserId,
+      reason: r.reason,
+      details: r.details,
+      severity: r.severity,
+      status: r.status,
+      guidelineId: r.guidelineId,
+      createdAt: new Date(r.createdAt).toISOString(),
+      resolvedAt: r.resolvedAt ? new Date(r.resolvedAt).toISOString() : null,
+      resolvedByUserId: r.resolvedByUserId,
+      resolutionActionId: r.resolutionActionId,
+    })),
+  });
+});
+
+router.post("/admin/reports/:id/dismiss", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const actorUserId = String(req.auth?.userId || "");
+  const db = prisma as any;
+  const before = await db.communityReport.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: "not_found" });
+  const updated = await db.communityReport.update({ where: { id }, data: { status: "DISMISSED", resolvedAt: new Date(), resolvedByUserId: actorUserId } });
+  await createAuditLog(actorUserId, "COMMUNITY_REPORT_DISMISSED", "CommunityReport", id, before, updated);
+  broadcastCommunityEvent("reports_changed", { reportId: id, action: "dismissed" });
+  return res.json({ ok: true });
+});
+
+router.post("/admin/moderate", requireAdmin, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const actionType = normalizeModerationActionType(req.body?.actionType);
+  const targetType = normalizeReportTargetType(req.body?.targetType);
+  const reason = requireNonEmptyString(req.body?.reason, 500);
+  const guidelineId = typeof req.body?.guidelineId === "string" ? String(req.body.guidelineId) : null;
+  const reportId = typeof req.body?.reportId === "string" ? String(req.body.reportId) : null;
+
+  if (!actionType || !targetType || !reason) return res.status(400).json({ error: "invalid_request" });
+
+  const db = prisma as any;
+  let targetLegacyId: bigint | null = null;
+  let targetNodeId: bigint | null = null;
+  let targetUserId: string | null = null;
+
+  if (targetType === "USER") {
+    targetUserId = requireNonEmptyString(req.body?.targetUserId, 64);
+    if (!targetUserId) return res.status(400).json({ error: "invalid_target" });
+  } else {
+    try {
+      targetLegacyId = BigInt(req.body?.targetLegacyId ?? req.body?.targetId ?? "");
+    } catch {
+      return res.status(400).json({ error: "invalid_target" });
+    }
+    const nodeIdRaw = req.body?.targetNodeId ?? req.body?.nodeId;
+    if (nodeIdRaw !== undefined && nodeIdRaw !== null && String(nodeIdRaw) !== "") {
+      try {
+        targetNodeId = BigInt(String(nodeIdRaw));
+      } catch {
+        return res.status(400).json({ error: "invalid_target" });
+      }
+    }
+  }
+
+  const durationHoursRaw = Number(req.body?.durationHours);
+  const durationHours = Number.isFinite(durationHoursRaw) ? Math.max(1, Math.min(24 * 365, Math.floor(durationHoursRaw))) : null;
+
+  const createdAction = await db.communityModerationAction.create({
+    data: {
+      actorUserId,
+      actionType,
+      targetType,
+      targetLegacyId: targetLegacyId ?? null,
+      targetNodeId: targetNodeId ?? null,
+      targetUserId: targetUserId ?? null,
+      reportId,
+      guidelineId,
+      reason,
+      durationHours,
+    },
+  });
+
+  if (actionType === "TEMP_BAN" || actionType === "PERM_BAN" || actionType === "ISSUE_WARNING") {
+    const userId = targetType === "USER" ? targetUserId : requireNonEmptyString(req.body?.targetUserId, 64);
+    if (userId) targetUserId = userId;
+  }
+
+  if (actionType === "TEMP_BAN" || actionType === "PERM_BAN") {
+    if (!targetUserId) return res.status(400).json({ error: "invalid_target" });
+    const until = actionType === "TEMP_BAN" && durationHours ? new Date(Date.now() + durationHours * 60 * 60 * 1000) : null;
+    const beforeUser = await db.user.findUnique({ where: { id: targetUserId } });
+    await db.user.update({
+      where: { id: targetUserId },
+      data: {
+        isBanned: true,
+        bannedAt: new Date(),
+        bannedUntil: until,
+        banReason: reason,
+        bannedBy: actorUserId,
+      },
+    });
+    await createAuditLog(actorUserId, actionType === "TEMP_BAN" ? "COMMUNITY_USER_TEMP_BANNED" : "COMMUNITY_USER_PERM_BANNED", "User", targetUserId, beforeUser, { isBanned: true, bannedUntil: until ? until.toISOString() : null });
+    await createCommunityNotification(targetUserId, {
+      type: actionType === "TEMP_BAN" ? "ban_temp" : "ban_perm",
+      title: "Account restricted",
+      body: actionType === "TEMP_BAN" && until ? `You have been temporarily banned until ${until.toISOString()}. Reason: ${reason}` : `You have been permanently banned. Reason: ${reason}`,
+      link: "/community",
+      meta: { actionId: createdAction.id },
+    });
+  }
+
+  if (actionType === "ISSUE_WARNING") {
+    if (!targetUserId) {
+      const userId = requireNonEmptyString(req.body?.targetUserId, 64);
+      if (userId) targetUserId = userId;
+    }
+    if (targetUserId) {
+      await createAuditLog(actorUserId, "COMMUNITY_USER_WARNED", "User", targetUserId, null, { reason, guidelineId, actionId: createdAction.id });
+      await createCommunityNotification(targetUserId, {
+        type: "warning",
+        title: "Community warning",
+        body: `Warning issued: ${reason}`,
+        link: "/community",
+        meta: { actionId: createdAction.id, guidelineId },
+      });
+    }
+  }
+
+  if (actionType === "REMOVE_CONTENT" || actionType === "RESTORE_CONTENT") {
+    if (targetType === "POST") {
+      const legacyId = targetLegacyId as bigint;
+      const before = await db.communityPost.findUnique({ where: { legacyId } });
+      if (!before) return res.status(404).json({ error: "not_found" });
+      const ownerId = String(before.userId);
+      const updated = await db.communityPost.update({
+        where: { legacyId },
+        data:
+          actionType === "REMOVE_CONTENT"
+            ? {
+                status: "REMOVED",
+                removedAt: new Date(),
+                removedByUserId: actorUserId,
+                removalReason: reason,
+                removalGuidelineId: guidelineId,
+              }
+            : {
+                status: "ACTIVE",
+                removedAt: null,
+                removedByUserId: null,
+                removalReason: null,
+                removalGuidelineId: null,
+              },
+      });
+      await createAuditLog(actorUserId, actionType === "REMOVE_CONTENT" ? "COMMUNITY_POST_REMOVED" : "COMMUNITY_POST_RESTORED", "CommunityPost", String(Number(legacyId)), before, updated);
+      if (actionType === "REMOVE_CONTENT") {
+        await createCommunityNotification(ownerId, {
+          type: "post_removed",
+          title: "Post removed",
+          body: `Your post was removed. Reason: ${reason}`,
+          link: "/community",
+          meta: { postId: Number(legacyId), guidelineId, actionId: createdAction.id },
+        });
+      } else {
+        await createCommunityNotification(ownerId, {
+          type: "post_restored",
+          title: "Post restored",
+          body: "Your post was restored by an admin.",
+          link: "/community",
+          meta: { postId: Number(legacyId), actionId: createdAction.id },
+        });
+      }
+      broadcastCommunityEvent("posts_changed", { postId: Number(legacyId), action: actionType === "REMOVE_CONTENT" ? "removed" : "restored" });
+    }
+
+    if (targetType === "DISCUSSION") {
+      const legacyId = targetLegacyId as bigint;
+      const before = await db.communityDiscussion.findUnique({ where: { legacyId } });
+      if (!before) return res.status(404).json({ error: "not_found" });
+      const ownerId = String(before.userId);
+      const updated = await db.communityDiscussion.update({
+        where: { legacyId },
+        data:
+          actionType === "REMOVE_CONTENT"
+            ? {
+                status: "REMOVED",
+                removedAt: new Date(),
+                removedByUserId: actorUserId,
+                removalReason: reason,
+                removalGuidelineId: guidelineId,
+              }
+            : {
+                status: "ACTIVE",
+                removedAt: null,
+                removedByUserId: null,
+                removalReason: null,
+                removalGuidelineId: null,
+              },
+      });
+      await createAuditLog(actorUserId, actionType === "REMOVE_CONTENT" ? "COMMUNITY_DISCUSSION_REMOVED" : "COMMUNITY_DISCUSSION_RESTORED", "CommunityDiscussion", String(Number(legacyId)), before, updated);
+      if (actionType === "REMOVE_CONTENT") {
+        await createCommunityNotification(ownerId, {
+          type: "discussion_removed",
+          title: "Discussion removed",
+          body: `Your discussion was removed. Reason: ${reason}`,
+          link: "/community",
+          meta: { discussionId: Number(legacyId), guidelineId, actionId: createdAction.id },
+        });
+      } else {
+        await createCommunityNotification(ownerId, {
+          type: "discussion_restored",
+          title: "Discussion restored",
+          body: "Your discussion was restored by an admin.",
+          link: "/community",
+          meta: { discussionId: Number(legacyId), actionId: createdAction.id },
+        });
+      }
+      broadcastCommunityEvent("discussions_changed", { discussionId: Number(legacyId), action: actionType === "REMOVE_CONTENT" ? "removed" : "restored" });
+    }
+
+    if (targetType === "POST_COMMENT") {
+      const legacyId = targetLegacyId as bigint;
+      const commentId = targetNodeId ? Number(targetNodeId) : NaN;
+      if (!Number.isFinite(commentId)) return res.status(400).json({ error: "invalid_target" });
+      const post = await db.communityPost.findUnique({ where: { legacyId } });
+      if (!post) return res.status(404).json({ error: "not_found" });
+      const current = (Array.isArray(post.comments) ? post.comments : []) as any[];
+      const upd = updateNodeInTreeGeneric(current, commentId, (n) => {
+        if (actionType === "REMOVE_CONTENT") {
+          return {
+            ...n,
+            originalContent: (n as any).originalContent ?? (n as any).content,
+            content: "[removed]",
+            removedAt: new Date().toISOString(),
+            removedByUserId: actorUserId,
+            removalReason: reason,
+            removalGuidelineId: guidelineId,
+          };
+        }
+        return {
+          ...n,
+          content: (n as any).originalContent ?? (n as any).content,
+          originalContent: undefined,
+          removedAt: undefined,
+          removedByUserId: undefined,
+          removalReason: undefined,
+          removalGuidelineId: undefined,
+        };
+      });
+      if (!upd.updated) return res.status(404).json({ error: "not_found" });
+      await db.communityPost.update({ where: { legacyId }, data: ({ comments: upd.next } as any) });
+      await createAuditLog(actorUserId, actionType === "REMOVE_CONTENT" ? "COMMUNITY_POST_COMMENT_REMOVED" : "COMMUNITY_POST_COMMENT_RESTORED", "CommunityPostComment", `${Number(legacyId)}:${commentId}`, upd.before, upd.after);
+      broadcastCommunityEvent("posts_changed", { postId: Number(legacyId), action: actionType === "REMOVE_CONTENT" ? "comment_removed" : "comment_restored" });
+    }
+
+    if (targetType === "DISCUSSION_REPLY") {
+      const legacyId = targetLegacyId as bigint;
+      const replyId = targetNodeId ? Number(targetNodeId) : NaN;
+      if (!Number.isFinite(replyId)) return res.status(400).json({ error: "invalid_target" });
+      const discussion = await db.communityDiscussion.findUnique({ where: { legacyId } });
+      if (!discussion) return res.status(404).json({ error: "not_found" });
+      const current = (Array.isArray(discussion.replies) ? discussion.replies : []) as any[];
+      const upd = updateNodeInTreeGeneric(current, replyId, (n) => {
+        if (actionType === "REMOVE_CONTENT") {
+          return {
+            ...n,
+            originalContent: (n as any).originalContent ?? (n as any).content,
+            content: "[removed]",
+            removedAt: new Date().toISOString(),
+            removedByUserId: actorUserId,
+            removalReason: reason,
+            removalGuidelineId: guidelineId,
+          };
+        }
+        return {
+          ...n,
+          content: (n as any).originalContent ?? (n as any).content,
+          originalContent: undefined,
+          removedAt: undefined,
+          removedByUserId: undefined,
+          removalReason: undefined,
+          removalGuidelineId: undefined,
+        };
+      });
+      if (!upd.updated) return res.status(404).json({ error: "not_found" });
+      await db.communityDiscussion.update({ where: { legacyId }, data: ({ replies: upd.next } as any) });
+      await createAuditLog(actorUserId, actionType === "REMOVE_CONTENT" ? "COMMUNITY_DISCUSSION_REPLY_REMOVED" : "COMMUNITY_DISCUSSION_REPLY_RESTORED", "CommunityDiscussionReply", `${Number(legacyId)}:${replyId}`, upd.before, upd.after);
+      broadcastCommunityEvent("discussions_changed", { discussionId: Number(legacyId), action: actionType === "REMOVE_CONTENT" ? "reply_removed" : "reply_restored" });
+    }
+  }
+
+  if (reportId) {
+    try {
+      await db.communityReport.update({ where: { id: reportId }, data: { status: "RESOLVED", resolvedAt: new Date(), resolvedByUserId: actorUserId, resolutionActionId: createdAction.id, guidelineId } });
+      broadcastCommunityEvent("reports_changed", { reportId, action: "resolved" });
+    } catch {
+    }
+  }
+
+  return res.json({ ok: true, actionId: createdAction.id });
+});
+
+router.get("/admin/users/:id", requireAdmin, async (req: any, res) => {
+  const userId = String(req.params.id || "");
+  if (!userId) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) return res.status(404).json({ error: "not_found" });
+
+  const [posts, discussions, followers, following, warnings, bans] = await Promise.all([
+    db.communityPost.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 200 }),
+    db.communityDiscussion.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 200 }),
+    db.follow.findMany({ where: { followingId: userId }, select: { followerId: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+    db.follow.findMany({ where: { followerId: userId }, select: { followingId: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+    db.communityModerationAction.findMany({ where: { targetUserId: userId, actionType: "ISSUE_WARNING" }, orderBy: { createdAt: "desc" }, take: 200 }),
+    db.communityModerationAction.findMany({ where: { targetUserId: userId, actionType: { in: ["TEMP_BAN", "PERM_BAN"] } }, orderBy: { createdAt: "desc" }, take: 200 }),
+  ]);
+
+  const savedPostIds: number[] = [];
+  try {
+    const savedRows = await db.communityPost.findMany({ select: { legacyId: true, savesBy: true } });
+    for (const p of savedRows) {
+      const savesBy = asStringArray(p?.savesBy);
+      if (savesBy.includes(userId)) savedPostIds.push(Number(p.legacyId));
+    }
+  } catch {
+  }
+
+  return res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      avatarUrl: user.avatarUrl || null,
+      xp: user.xp,
+      isBanned: !!user.isBanned,
+      bannedAt: user.bannedAt ? new Date(user.bannedAt).toISOString() : null,
+      bannedUntil: user.bannedUntil ? new Date(user.bannedUntil).toISOString() : null,
+      banReason: user.banReason || null,
+      bannedBy: user.bannedBy || null,
+    },
+    activity: {
+      posts: posts.map((p: any) => ({ id: Number(p.legacyId), content: p.content, status: p.status, createdAt: new Date(p.createdAt).toISOString() })),
+      discussions: discussions.map((d: any) => ({ id: Number(d.legacyId), title: d.title, category: d.category, status: d.status, createdAt: new Date(d.createdAt).toISOString() })),
+      savedPostIds,
+      followers: followers.map((r: any) => String(r.followerId)),
+      following: following.map((r: any) => String(r.followingId)),
+    },
+    enforcement: {
+      warnings: warnings.map((a: any) => ({ id: a.id, reason: a.reason, guidelineId: a.guidelineId, createdAt: new Date(a.createdAt).toISOString(), actorUserId: a.actorUserId })),
+      bans: bans.map((a: any) => ({ id: a.id, actionType: a.actionType, reason: a.reason, durationHours: a.durationHours, createdAt: new Date(a.createdAt).toISOString(), actorUserId: a.actorUserId })),
+    },
+  });
+});
+
+router.get("/admin/guidelines", requireAdmin, async (_req, res) => {
+  const db = prisma as any;
+  const items = await db.communityGuideline.findMany({ orderBy: { updatedAt: "desc" } });
+  return res.json({ guidelines: items.map((g: any) => ({ id: g.id, slug: g.slug, title: g.title, content: g.content, status: g.status, publishedAt: g.publishedAt ? new Date(g.publishedAt).toISOString() : null, updatedAt: new Date(g.updatedAt).toISOString() })) });
+});
+
+router.post("/admin/guidelines", requireAdmin, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const slug = requireNonEmptyString(req.body?.slug, 80);
+  const title = requireNonEmptyString(req.body?.title, 160);
+  const content = requireNonEmptyString(req.body?.content, 20000);
+  if (!slug || !title || !content) return res.status(400).json({ error: "invalid_request" });
+  const db = prisma as any;
+  const created = await db.communityGuideline.create({ data: { slug, title, content, status: "DRAFT" } });
+  await createAuditLog(actorUserId, "COMMUNITY_GUIDELINE_CREATED", "CommunityGuideline", created.id, null, created);
+  return res.json({ guideline: { id: created.id } });
+});
+
+router.patch("/admin/guidelines/:id", requireAdmin, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+  const before = await db.communityGuideline.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: "not_found" });
+  const title = typeof req.body?.title === "string" ? String(req.body.title).trim().slice(0, 160) : undefined;
+  const content = typeof req.body?.content === "string" ? String(req.body.content).trim().slice(0, 20000) : undefined;
+  const slug = typeof req.body?.slug === "string" ? String(req.body.slug).trim().slice(0, 80) : undefined;
+  const status = req.body?.status && (String(req.body.status).toUpperCase() === "DRAFT" || String(req.body.status).toUpperCase() === "PUBLISHED") ? String(req.body.status).toUpperCase() : undefined;
+  const nextData: any = {};
+  if (slug) nextData.slug = slug;
+  if (title) nextData.title = title;
+  if (content) nextData.content = content;
+  if (status) nextData.status = status;
+  if (status === "PUBLISHED" && !before.publishedAt) nextData.publishedAt = new Date();
+  const updated = await db.communityGuideline.update({ where: { id }, data: nextData });
+  await createAuditLog(actorUserId, "COMMUNITY_GUIDELINE_UPDATED", "CommunityGuideline", id, before, updated);
+  return res.json({ ok: true });
+});
+
+router.get("/admin/categories", requireAdmin, async (_req, res) => {
+  const db = prisma as any;
+  const items = await db.communityDiscussionCategory.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
+  return res.json({ categories: items.map((c: any) => ({ id: c.id, name: c.name, slug: c.slug, sortOrder: c.sortOrder, isActive: !!c.isActive })) });
+});
+
+router.post("/admin/categories", requireAdmin, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const name = requireNonEmptyString(req.body?.name, 80);
+  const slug = requireNonEmptyString(req.body?.slug, 80);
+  const sortOrderRaw = Number(req.body?.sortOrder);
+  const sortOrder = Number.isFinite(sortOrderRaw) ? Math.floor(sortOrderRaw) : 0;
+  if (!name || !slug) return res.status(400).json({ error: "invalid_request" });
+  const db = prisma as any;
+  const created = await db.communityDiscussionCategory.create({ data: { name, slug, sortOrder, isActive: true } });
+  await createAuditLog(actorUserId, "COMMUNITY_CATEGORY_CREATED", "CommunityDiscussionCategory", created.id, null, created);
+  return res.json({ category: { id: created.id } });
+});
+
+router.patch("/admin/categories/:id", requireAdmin, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+  const before = await db.communityDiscussionCategory.findUnique({ where: { id } });
+  if (!before) return res.status(404).json({ error: "not_found" });
+  const name = typeof req.body?.name === "string" ? String(req.body.name).trim().slice(0, 80) : undefined;
+  const slug = typeof req.body?.slug === "string" ? String(req.body.slug).trim().slice(0, 80) : undefined;
+  const sortOrderRaw = req.body?.sortOrder;
+  const sortOrder = sortOrderRaw !== undefined && sortOrderRaw !== null && String(sortOrderRaw) !== "" ? Number(sortOrderRaw) : undefined;
+  const isActive = typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined;
+  const nextData: any = {};
+  if (name) nextData.name = name;
+  if (slug) nextData.slug = slug;
+  if (Number.isFinite(sortOrder as any)) nextData.sortOrder = Math.floor(sortOrder as any);
+  if (typeof isActive === "boolean") nextData.isActive = isActive;
+  const updated = await db.communityDiscussionCategory.update({ where: { id }, data: nextData });
+  await createAuditLog(actorUserId, "COMMUNITY_CATEGORY_UPDATED", "CommunityDiscussionCategory", id, before, updated);
   return res.json({ ok: true });
 });
 

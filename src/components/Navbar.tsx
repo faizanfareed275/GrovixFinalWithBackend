@@ -1,13 +1,15 @@
 import { useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Zap, Trophy, Users, Briefcase, Building2, User, Gamepad2, Home, MessageCircle, LogOut } from "lucide-react";
+import { Trophy, Users, Briefcase, Building2, User, Gamepad2, Home, MessageCircle, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { useAuth } from "@/hooks/useAuth";
 import { useChat } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
+
+const GROVIX_LOGO_SRC = "/grovix-logo.png";
 
 const navItems = [
   { name: "Home", href: "/", icon: Home },
@@ -39,15 +41,14 @@ export function Navbar() {
             <div className="flex items-center justify-between h-16">
               {/* Logo */}
               <Link to="/" className="flex items-center gap-2 group">
-                <div className="relative">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-neon flex items-center justify-center">
-                    <Zap className="w-6 h-6 text-primary-foreground dark:text-cyber-dark" />
-                  </div>
-                  <div className="absolute inset-0 rounded-lg bg-gradient-neon blur-lg opacity-50 group-hover:opacity-100 transition-opacity" />
-                </div>
-                <span className="font-display text-xl font-bold gradient-text">
-                  Grovix
-                </span>
+                <img
+                  src={GROVIX_LOGO_SRC}
+                  alt="Grovix"
+                  className="h-9 w-auto"
+                  loading="eager"
+                  decoding="async"
+                />
+                <span className="sr-only">Grovix</span>
               </Link>
 
               {/* Desktop Navigation */}
@@ -130,12 +131,14 @@ export function Navbar() {
           <div className="flex items-center justify-between h-14 px-4">
             {/* Logo */}
             <Link to="/" className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-neon flex items-center justify-center">
-                <Zap className="w-5 h-5 text-primary-foreground dark:text-cyber-dark" />
-              </div>
-              <span className="font-display text-lg font-bold gradient-text">
-                Grovix
-              </span>
+              <img
+                src={GROVIX_LOGO_SRC}
+                alt="Grovix"
+                className="h-8 w-auto"
+                loading="eager"
+                decoding="async"
+              />
+              <span className="sr-only">Grovix</span>
             </Link>
 
             {/* Mobile Actions */}

@@ -15,6 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+const GROVIX_LOGO_SRC = "/grovix-logo.png";
+
 const navSections: Array<{
   title: string;
   items: Array<{ to: string; label: string; icon: any }>;
@@ -204,7 +206,16 @@ export default function AdminLayout() {
             <div className="p-5 border-b border-border">
               <div className="flex items-start justify-between gap-2">
                 <div className={isSidebarCollapsed ? "hidden" : ""}>
-                  <div className="text-lg font-display font-bold">Admin Panel</div>
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={GROVIX_LOGO_SRC}
+                      alt="Grovix"
+                      className="h-7 w-auto"
+                      loading="eager"
+                      decoding="async"
+                    />
+                    <div className="text-lg font-display font-bold">Admin Panel</div>
+                  </div>
                   <div className="text-sm text-muted-foreground truncate">{user?.email || ""}</div>
                 </div>
                 <Button
@@ -253,7 +264,18 @@ export default function AdminLayout() {
                     </SheetTrigger>
                     <SheetContent side="left" className="p-0">
                       <SheetHeader className="p-5 border-b border-border">
-                        <SheetTitle>Admin Panel</SheetTitle>
+                        <SheetTitle>
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={GROVIX_LOGO_SRC}
+                              alt="Grovix"
+                              className="h-7 w-auto"
+                              loading="eager"
+                              decoding="async"
+                            />
+                            <span>Admin Panel</span>
+                          </div>
+                        </SheetTitle>
                         <div className="text-sm text-muted-foreground truncate">{user?.email || ""}</div>
                       </SheetHeader>
                       <div className="p-3">

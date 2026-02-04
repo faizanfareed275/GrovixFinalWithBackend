@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { Mail, Lock, User, ArrowRight, Zap, Eye, EyeOff } from "lucide-react";
+import { Mail, Lock, User, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+
+const GROVIX_LOGO_SRC = "/grovix-logo.png";
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -74,8 +76,14 @@ export default function Auth() {
         {/* Logo */}
         <div className="text-center mb-8">
           <a href="/" className="inline-flex items-center gap-2 mb-4">
-            <Zap className="w-8 h-8 text-primary" />
-            <span className="text-2xl font-display font-bold gradient-text">Grovix</span>
+            <img
+              src={GROVIX_LOGO_SRC}
+              alt="Grovix"
+              className="h-9 w-auto"
+              loading="eager"
+              decoding="async"
+            />
+            <span className="sr-only">Grovix</span>
           </a>
           <h1 className="text-3xl font-display font-bold mb-2">
             {isLogin ? "Welcome Back!" : "Join Grovix"}

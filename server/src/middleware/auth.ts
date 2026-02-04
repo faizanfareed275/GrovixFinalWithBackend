@@ -16,11 +16,35 @@ export function requireAuth(req: any, res: any, next: any) {
     const secret = process.env.JWT_SECRET;
     if (!secret) return res.status(500).json({ error: "server_misconfigured" });
     const decoded = jwt.verify(token, secret) as any;
-    req.auth = { userId: decoded.userId, role: decoded.role } satisfies AuthUser;
+
+    const userId = String(decoded.userId || "");
+    if (!userId) return res.status(401).json({ error: "unauthorized" });
+
     prisma.user
-      .update({ where: { id: decoded.userId }, data: ({ lastSeenAt: new Date() } as any) })
-      .catch(() => {});
-    return next();
+      .findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, isBanned: true, bannedUntil: true },
+      })
+      .then((u) => {
+        if (!u) return res.status(401).json({ error: "unauthorized" });
+
+        if (u.isBanned) {
+          const until = u.bannedUntil ? new Date(u.bannedUntil) : null;
+          const stillBanned = !until || until.getTime() > Date.now();
+          if (stillBanned) return res.status(403).json({ error: "banned" });
+        }
+
+        req.auth = { userId: u.id, role: String(u.role || decoded.role || "") } satisfies AuthUser;
+
+        prisma.user
+          .update({ where: { id: u.id }, data: { lastSeenAt: new Date() } })
+          .catch(() => {});
+
+        return next();
+      })
+      .catch(() => {
+        return res.status(401).json({ error: "unauthorized" });
+      });
   } catch {
     return res.status(401).json({ error: "unauthorized" });
   }

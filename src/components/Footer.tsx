@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
-import { Zap, Github, Twitter, Linkedin, Youtube, Mail } from "lucide-react";
+import { Github, Twitter, Linkedin, Youtube, Mail } from "lucide-react";
+
+const GROVIX_LOGO_SRC = "/grovix-logo.png";
 
 const footerLinks = {
   Platform: [
@@ -42,12 +44,14 @@ export function Footer() {
           {/* Brand */}
           <div className="col-span-2">
             <Link to="/" className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-gradient-neon flex items-center justify-center">
-                <Zap className="w-6 h-6 text-cyber-dark" />
-              </div>
-              <span className="font-display text-xl font-bold gradient-text">
-                Grovix
-              </span>
+              <img
+                src={GROVIX_LOGO_SRC}
+                alt="Grovix"
+                className="h-9 w-auto"
+                loading="lazy"
+                decoding="async"
+              />
+              <span className="sr-only">Grovix</span>
             </Link>
             <p className="text-muted-foreground mb-6 max-w-xs">
               The gamified skill-building platform where youth learn, level up, and get hired.

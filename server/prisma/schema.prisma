@@ -33,10 +33,18 @@ model CommunityPost {
   poll      Json?
   aiScore   Int?
   aiReason  String?
+  status    CommunityContentStatus @default(ACTIVE)
+  removedAt DateTime?
+  removedByUserId String?
+  removalReason String?
+  removalGuidelineId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   userRef User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }
 
 model CommunityDiscussion {
@@ -51,10 +59,148 @@ model CommunityDiscussion {
   replies   Json     @default("[]")
   views     Int      @default(0)
   hot       Boolean  @default(false)
+  pinned    Boolean  @default(false)
+  locked    Boolean  @default(false)
+  archived  Boolean  @default(false)
+  status    CommunityContentStatus @default(ACTIVE)
+  removedAt DateTime?
+  removedByUserId String?
+  removalReason String?
+  removalGuidelineId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   userRef User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([category, createdAt])
+}
+
+enum CommunityContentStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum CommunityReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum CommunityReportTargetType {
+  POST
+  POST_COMMENT
+  DISCUSSION
+  DISCUSSION_REPLY
+  USER
+}
+
+enum CommunityModerationActionType {
+  REMOVE_CONTENT
+  RESTORE_CONTENT
+  ISSUE_WARNING
+  TEMP_BAN
+  PERM_BAN
+}
+
+enum CommunityModerationSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CommunityGuidelineStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model CommunityDiscussionCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model CommunityGuideline {
+  id        String   @id @default(uuid())
+  slug      String   @unique
+  title     String
+  content   String
+  status    CommunityGuidelineStatus @default(DRAFT)
+  publishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, publishedAt])
+}
+
+model CommunityReport {
+  id        String   @id @default(uuid())
+  reporterUserId String
+  targetType CommunityReportTargetType
+  targetLegacyId BigInt?
+  targetNodeId BigInt?
+  targetUserId String?
+  reason    String
+  details   String?
+  severity  CommunityModerationSeverity @default(MEDIUM)
+  status    CommunityReportStatus @default(OPEN)
+  resolvedAt DateTime?
+  resolvedByUserId String?
+  resolutionActionId String?
+  guidelineId String?
+  snapshot  Json?
+  createdAt DateTime @default(now())
+
+  reporter User @relation("CommunityReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetLegacyId])
+  @@index([reporterUserId, createdAt])
+}
+
+model CommunityModerationAction {
+  id        String   @id @default(uuid())
+  actorUserId String
+  actionType CommunityModerationActionType
+  targetType CommunityReportTargetType
+  targetLegacyId BigInt?
+  targetNodeId BigInt?
+  targetUserId String?
+  reportId  String?
+  guidelineId String?
+  reason    String
+  durationHours Int?
+  createdAt DateTime @default(now())
+
+  actor User @relation("CommunityModerationActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetLegacyId])
+  @@index([reportId])
+}
+
+model CommunityNotification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String?
+  body      String
+  link      String?
+  meta      Json?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }
 
 datasource db {
@@ -172,6 +318,11 @@ model User {
   twitterUrl   String?
   websiteUrl   String?
   available    Boolean  @default(true)
+  isBanned     Boolean  @default(false)
+  bannedAt     DateTime?
+  bannedUntil  DateTime?
+  banReason    String?
+  bannedBy     String?
   lastSeenAt   DateTime @default(now())
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -186,6 +337,10 @@ model User {
 
   communityPosts          CommunityPost[]
   communityDiscussions    CommunityDiscussion[]
+
+  communityNotifications  CommunityNotification[]
+  communityReportsFiled   CommunityReport[] @relation("CommunityReportReporter")
+  communityModerationActions CommunityModerationAction[] @relation("CommunityModerationActor")
 
   jobPosts JobPost[]
 

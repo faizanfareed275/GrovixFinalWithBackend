@@ -22,25 +22,28 @@ function internshipCodeFromId(id: number, now: Date) {
 }
 
 async function main() {
-  const adminEmail = "admin@grovix.com";
-  const adminPassword = "admin123";
+  const admins = [
+    { email: "adminfaizan@gmail.com", password: "faizan123", name: "Faizan Admin" },
+    { email: "admin@grovix.com", password: "admin123", name: "Grovix Admin" },
+  ];
 
-  const passwordHash = await bcrypt.hash(adminPassword, 10);
-
-  await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: {
-      name: "Grovix Admin",
-      passwordHash,
-      role: Role.ADMIN,
-    },
-    create: {
-      email: adminEmail,
-      name: "Grovix Admin",
-      passwordHash,
-      role: Role.ADMIN,
-    },
-  });
+  for (const a of admins) {
+    const passwordHash = await bcrypt.hash(a.password, 10);
+    await prisma.user.upsert({
+      where: { email: a.email },
+      update: {
+        name: a.name,
+        passwordHash,
+        role: Role.ADMIN,
+      },
+      create: {
+        email: a.email,
+        name: a.name,
+        passwordHash,
+        role: Role.ADMIN,
+      },
+    });
+  }
 
   if (process.env.SEED_SAMPLE_DATA === "1") {
     const now = new Date();
