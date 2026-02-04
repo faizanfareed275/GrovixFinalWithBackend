@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MoreHorizontal, Edit2, Trash2, X } from "lucide-react";
+import { MoreHorizontal, Edit2, Trash2, X, Flag, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface PostActionsProps {
@@ -8,19 +8,13 @@ interface PostActionsProps {
   isOwner: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  onReport?: () => void;
+  onReportUser?: () => void;
 }
 
-export function PostActions({ postId, isOwner, onEdit, onDelete }: PostActionsProps) {
+export function PostActions({ postId, isOwner, onEdit, onDelete, onReport, onReportUser }: PostActionsProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  if (!isOwner) {
-    return (
-      <button className="p-2 hover:bg-muted rounded-lg transition-colors">
-        <MoreHorizontal className="w-5 h-5 text-muted-foreground" />
-      </button>
-    );
-  }
 
   return (
     <div className="relative">
@@ -44,26 +38,55 @@ export function PostActions({ postId, isOwner, onEdit, onDelete }: PostActionsPr
               exit={{ opacity: 0, scale: 0.95, y: -10 }}
               className="absolute right-0 top-full mt-2 w-48 glass-card p-2 z-50"
             >
-              <button
-                onClick={() => {
-                  onEdit();
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-left"
-              >
-                <Edit2 className="w-4 h-4" />
-                <span>Edit Post</span>
-              </button>
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(true);
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-left"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete Post</span>
-              </button>
+              {isOwner ? (
+                <>
+                  <button
+                    onClick={() => {
+                      onEdit();
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-left"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    <span>Edit Post</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowDeleteConfirm(true);
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-left"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Post</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      onReport?.();
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-left"
+                  >
+                    <Flag className="w-4 h-4" />
+                    <span>Report Post</span>
+                  </button>
+                  {onReportUser && (
+                    <button
+                      onClick={() => {
+                        onReportUser?.();
+                        setIsOpen(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-left"
+                    >
+                      <UserX className="w-4 h-4" />
+                      <span>Report User</span>
+                    </button>
+                  )}
+                </>
+              )}
             </motion.div>
           </>
         )}

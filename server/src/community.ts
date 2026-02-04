@@ -1459,11 +1459,37 @@ router.get("/admin/reports", requireAdmin, async (req: any, res) => {
   const status = String(req.query?.status || "OPEN").toUpperCase();
   const targetType = req.query?.targetType ? normalizeReportTargetType(req.query.targetType) : null;
   const severity = req.query?.severity ? normalizeSeverity(req.query.severity) : null;
+  const qRaw = typeof req.query?.q === "string" ? String(req.query.q) : "";
+  const q = qRaw.trim();
 
   const where: any = {};
   if (status === "OPEN" || status === "RESOLVED" || status === "DISMISSED") where.status = status;
   if (targetType) where.targetType = targetType;
   if (severity) where.severity = severity;
+
+  if (q) {
+    const or: any[] = [
+      { id: { contains: q } },
+      { reporterUserId: { contains: q } },
+      { targetUserId: { contains: q } },
+      { reason: { contains: q } },
+      { details: { contains: q } },
+    ];
+
+    const n = Number(q);
+    if (Number.isFinite(n) && String(Math.floor(n)) === q) {
+      try {
+        or.push({ targetLegacyId: BigInt(q) });
+      } catch {
+      }
+      try {
+        or.push({ targetNodeId: BigInt(q) });
+      } catch {
+      }
+    }
+
+    where.OR = or;
+  }
 
   const items = await db.communityReport.findMany({ where, orderBy: { createdAt: "desc" }, take: 200 });
   return res.json({

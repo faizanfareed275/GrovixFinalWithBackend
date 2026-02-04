@@ -20,6 +20,11 @@ import AdminNotifications from "@/admin/pages/AdminNotifications";
 import AdminStorage from "@/admin/pages/AdminStorage";
 import AdminDiscussions from "@/admin/pages/AdminDiscussions";
 import AdminProfileBadges from "@/admin/pages/AdminProfileBadges";
+import AdminModerationReports from "@/admin/pages/AdminModerationReports";
+import AdminCommunityGuidelines from "@/admin/pages/AdminCommunityGuidelines";
+import AdminCommunityCategories from "@/admin/pages/AdminCommunityCategories";
+import AdminCommunityUserDetail from "@/admin/pages/AdminCommunityUserDetail";
+import AdminCommunityInsights from "@/admin/pages/AdminCommunityInsights";
 import AdminInternshipCatalog from "@/admin/pages/AdminInternshipCatalog";
 import AdminInternshipTasks from "@/admin/pages/AdminInternshipTasks";
 import AdminInternshipSubmissions from "@/admin/pages/AdminInternshipSubmissions";
@@ -88,6 +93,11 @@ const App = () => (
                   <Route path="users" element={<AdminUsers />} />
                   <Route path="community" element={<AdminCommunity />} />
                   <Route path="discussions" element={<AdminDiscussions />} />
+                  <Route path="reports" element={<AdminModerationReports />} />
+                  <Route path="community-guidelines" element={<AdminCommunityGuidelines />} />
+                  <Route path="community-categories" element={<AdminCommunityCategories />} />
+                  <Route path="community-users/:id" element={<AdminCommunityUserDetail />} />
+                  <Route path="community-insights" element={<AdminCommunityInsights />} />
                   <Route path="profile" element={<AdminProfileBadges />} />
                   <Route path="challenges" element={<AdminChallenges />} />
                   <Route path="internships" element={<AdminInternships />} />

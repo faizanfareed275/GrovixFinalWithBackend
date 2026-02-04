@@ -29,6 +29,7 @@ import { ImageLightbox } from "@/components/ImageLightbox";
 import { ReactionPicker, ReactionType, REACTIONS } from "@/components/ReactionPicker";
 import { PollDisplay, Poll } from "@/components/PollCreator";
 import { HashtagRenderer, extractHashtags, TrendingHashtags } from "@/components/HashtagRenderer";
+import { ReportDialog, ReportDialogTarget } from "@/components/ReportDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useFollow } from "@/hooks/useFollow";
 import { useStreak } from "@/hooks/useStreak";
@@ -313,6 +314,8 @@ function PostCard({
   onEdit,
   onDelete,
   onSave,
+  onReportPost,
+  onReportComment,
   onRepost,
   onShare,
   onReact,
@@ -330,6 +333,8 @@ function PostCard({
   onEdit: (postId: number) => void;
   onDelete: (postId: number) => void;
   onSave: (postId: number) => void;
+  onReportPost: (postId: number) => void;
+  onReportComment: (postId: number, commentId: number) => void;
   onRepost: (post: Post) => void;
   onShare: (postId: number) => void;
   onReact: (postId: number, reaction: ReactionType) => void;
@@ -457,6 +462,7 @@ function PostCard({
             isOwner={isOwner}
             onEdit={() => onEdit(post.id)}
             onDelete={() => onDelete(post.id)}
+            onReport={() => onReportPost(post.id)}
           />
         </div>
       </div>
@@ -664,6 +670,7 @@ function PostCard({
               onAddReply={onAddReply}
               onLikeComment={onLikeComment}
               onDeleteComment={onDeleteComment}
+              onReportComment={onReportComment}
             />
           </motion.div>
         )}
@@ -695,6 +702,9 @@ export default function Community() {
   const [selectedDiscussion, setSelectedDiscussion] = useState<Discussion | null>(null);
   const [isCreateDiscussionOpen, setIsCreateDiscussionOpen] = useState(false);
 
+  const [reportTarget, setReportTarget] = useState<ReportDialogTarget | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+
   const defaultApiUrl =
     typeof window !== "undefined"
       ? `${window.location.protocol}//${window.location.hostname}:4000`
@@ -706,6 +716,34 @@ export default function Community() {
     toast.error("Please sign in to continue");
     navigate("/auth");
     return false;
+  };
+
+  const openReport = (target: ReportDialogTarget) => {
+    if (!ensureSignedIn()) return;
+    setReportTarget(target);
+    setReportOpen(true);
+  };
+
+  const handleReportPost = (postId: number) => {
+    openReport({ targetType: "POST", targetLegacyId: postId, label: `Post #${postId}` });
+  };
+
+  const handleReportPostComment = (postId: number, commentId: number) => {
+    openReport({
+      targetType: "POST_COMMENT",
+      targetLegacyId: postId,
+      targetNodeId: commentId,
+      label: `Comment #${commentId} on Post #${postId}`,
+    });
+  };
+
+  const handleReportDiscussionReply = (discussionId: number, replyId: number) => {
+    openReport({
+      targetType: "DISCUSSION_REPLY",
+      targetLegacyId: discussionId,
+      targetNodeId: replyId,
+      label: `Reply #${replyId} on Discussion #${discussionId}`,
+    });
   };
 
   const toastApiError = (e: any, fallback: string) => {
@@ -1403,6 +1441,8 @@ export default function Community() {
                             onEdit={handleEditPost}
                             onDelete={handleDeletePost}
                             onSave={handleSavePost}
+                            onReportPost={handleReportPost}
+                            onReportComment={handleReportPostComment}
                             onRepost={handleRepost}
                             onShare={handleShare}
                             onReact={handleReact}
@@ -1449,6 +1489,8 @@ export default function Community() {
                             onEdit={handleEditPost}
                             onDelete={handleDeletePost}
                             onSave={handleSavePost}
+                            onReportPost={handleReportPost}
+                            onReportComment={handleReportPostComment}
                             onRepost={handleRepost}
                             onShare={handleShare}
                             onReact={handleReact}
@@ -1488,6 +1530,9 @@ export default function Community() {
                           onLikeReply={handleLikeDiscussionReply}
                           onDeleteReply={handleDeleteDiscussionReply}
                           onDeleteDiscussion={handleDeleteDiscussion}
+                          onReportDiscussion={(discussionId) => openReport({ targetType: "DISCUSSION", targetLegacyId: discussionId, label: `Discussion #${discussionId}` })}
+                          onReportReply={handleReportDiscussionReply}
+                          onReportUser={(userId) => handleReportUser(userId, `User ${selectedDiscussion.author}`)}
                         />
                       ) : (
                         <>
@@ -1723,6 +1768,8 @@ export default function Community() {
         onClose={() => setIsCreateDiscussionOpen(false)}
         onSubmit={handleCreateDiscussion}
       />
+
+      <ReportDialog open={reportOpen} onOpenChange={setReportOpen} target={reportTarget} />
     </div>
   );
 }

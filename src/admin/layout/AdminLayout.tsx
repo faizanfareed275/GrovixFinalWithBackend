@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { Menu, ChevronDown, ChevronRight, Target, ClipboardCheck } from "lucide-react";
+import { Menu, ChevronDown, ChevronRight, Target, ClipboardCheck, Flag } from "lucide-react";
 import { LayoutDashboard, Users, MessageSquare, Trophy, Briefcase, Calendar, Bell, Mail, Database, Award, BookOpen, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -40,6 +40,10 @@ const navSections: Array<{
     items: [
       { to: "/admin/community", label: "Posts", icon: MessageSquare },
       { to: "/admin/discussions", label: "Discussions", icon: MessageSquare },
+      { to: "/admin/reports", label: "Reports Queue", icon: Flag },
+      { to: "/admin/community-insights", label: "Insights", icon: Flag },
+      { to: "/admin/community-guidelines", label: "Guidelines", icon: BookOpen },
+      { to: "/admin/community-categories", label: "Categories", icon: BookOpen },
       { to: "/admin/events", label: "Events", icon: Calendar },
     ],
   },

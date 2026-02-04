@@ -1,10 +1,16 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Heart, Reply, Send, Trash2 } from "lucide-react";
+import { Heart, Reply, Send, Trash2, MoreHorizontal } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useFollow } from "@/hooks/useFollow";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/UserAvatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export interface Comment {
   id: number;
@@ -26,6 +32,7 @@ interface CommentSectionProps {
   onAddReply: (postId: number, parentCommentId: number, content: string) => void;
   onLikeComment: (postId: number, commentId: number) => void;
   onDeleteComment: (postId: number, commentId: number) => void;
+  onReportComment?: (postId: number, commentId: number) => void;
 }
 
 export function CommentSection({
@@ -35,6 +42,7 @@ export function CommentSection({
   onAddReply,
   onLikeComment,
   onDeleteComment,
+  onReportComment,
 }: CommentSectionProps) {
   const { user } = useAuth();
   const { isFollowing } = useFollow(user?.id || "guest");
@@ -117,13 +125,29 @@ export function CommentSection({
                     <span className="text-[10px] text-muted-foreground">{comment.timeAgo}</span>
                   )}
                 </div>
-                {user?.id === comment.userId && (
+                {user?.id === comment.userId ? (
                   <button
                     onClick={() => onDeleteComment(postId, comment.id)}
                     className={`${depth === 0 ? "p-1" : "p-0.5"} hover:bg-destructive/20 rounded transition-colors`}
                   >
                     <Trash2 className={`${depth === 0 ? "w-3 h-3" : "w-2.5 h-2.5"} text-muted-foreground hover:text-destructive`} />
                   </button>
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className={`${depth === 0 ? "p-1" : "p-0.5"} hover:bg-muted rounded transition-colors`}
+                      >
+                        <MoreHorizontal className={`${depth === 0 ? "w-3 h-3" : "w-2.5 h-2.5"} text-muted-foreground`} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => onReportComment?.(postId, comment.id)}>
+                        Report
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
               <p className={`${depth === 0 ? "text-sm" : "text-xs mt-1"} text-foreground`}>{comment.content}</p>

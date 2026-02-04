@@ -5,7 +5,7 @@ import {
   ArrowLeft, Zap, Flame, Star, 
   Github, Linkedin, Twitter, Globe,
   MessageSquare, CheckCircle,
-  Briefcase, Target, Users, MapPin, Share2
+  Briefcase, Target, Users, MapPin, Share2, MoreHorizontal, Flag
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
@@ -19,6 +19,15 @@ import { apiFetch } from "@/lib/api";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/useAuth";
+import { PostActions } from "@/components/PostActions";
+import { ReportDialog, ReportDialogTarget } from "@/components/ReportDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface CandidateProfileData {
   id: string;
@@ -71,11 +80,27 @@ type CandidatePost = {
 export default function CandidateProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [candidate, setCandidate] = useState<CandidateProfileData | null>(null);
   const [loadingCandidate, setLoadingCandidate] = useState(false);
   const [posts, setPosts] = useState<CandidatePost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
+  const [reportTarget, setReportTarget] = useState<ReportDialogTarget | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+
+  const ensureSignedIn = () => {
+    if (user) return true;
+    toast.error("Please sign in to continue");
+    navigate("/auth");
+    return false;
+  };
+
+  const openReport = (target: ReportDialogTarget) => {
+    if (!ensureSignedIn()) return;
+    setReportTarget(target);
+    setReportOpen(true);
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -318,6 +343,27 @@ export default function CandidateProfile() {
                   <Button variant="outline" onClick={handleShareProfile}>
                     <Share2 className="w-4 h-4" />
                   </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline">
+                        <MoreHorizontal className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() =>
+                          openReport({
+                            targetType: "USER",
+                            targetUserId: candidate.id,
+                            label: `User ${candidate.name}`,
+                          })
+                        }
+                      >
+                        <Flag className="w-4 h-4 mr-2" />
+                        Report user
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
                 {candidate.socialLinks && (
                   <div className="flex items-center gap-2">
@@ -427,7 +473,29 @@ export default function CandidateProfile() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-3">
                             <div className="font-semibold truncate">{p.user}</div>
-                            <div className="text-xs text-muted-foreground shrink-0">{p.timeAgo}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-xs text-muted-foreground shrink-0">{p.timeAgo}</div>
+                              <PostActions
+                                postId={p.id}
+                                isOwner={user?.id === p.userId}
+                                onEdit={() => {}}
+                                onDelete={() => {}}
+                                onReport={() =>
+                                  openReport({
+                                    targetType: "POST",
+                                    targetLegacyId: p.id,
+                                    label: `Post #${p.id}`,
+                                  })
+                                }
+                                onReportUser={() =>
+                                  openReport({
+                                    targetType: "USER",
+                                    targetUserId: p.userId,
+                                    label: `User ${p.user}`,
+                                  })
+                                }
+                              />
+                            </div>
                           </div>
                           <div className="mt-2 text-foreground whitespace-pre-line">{p.content}</div>
                           {Array.isArray(p.images) && p.images.length > 0 && (
@@ -526,6 +594,8 @@ export default function CandidateProfile() {
           .slice(0, 2)
           .toUpperCase()}
       />
+
+      <ReportDialog open={reportOpen} onOpenChange={setReportOpen} target={reportTarget} />
     </div>
   );
 }

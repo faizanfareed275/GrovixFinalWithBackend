@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Users, MessageSquare, Trophy, Briefcase, Calendar, ClipboardCheck, Target } from "lucide-react";
-import { readJson, safeNumber } from "@/admin/lib/storage";
+import { useEffect, useState } from "react";
+import { Users, MessageSquare, ClipboardCheck, Target, ShieldAlert, MessageCircle, BarChart3, Layers, Briefcase } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
 function StatCard({ title, value, icon: Icon }: { title: string; value: string; icon: any }) {
@@ -20,6 +19,21 @@ function StatCard({ title, value, icon: Icon }: { title: string; value: string; 
 }
 
 export default function AdminDashboard() {
+  const [communityStats, setCommunityStats] = useState<{
+    totals: {
+      posts: number;
+      discussions: number;
+      comments: number;
+      discussionReplies: number;
+      polls: number;
+    };
+    moderation: {
+      activeUsers7d: number;
+      reportedOpen: number;
+      removedContent: number;
+    };
+  } | null>(null);
+
   const [v2Stats, setV2Stats] = useState<{
     pendingAttempts: number;
     lockedAssignments: number;
@@ -27,22 +41,15 @@ export default function AdminDashboard() {
     pendingApplications: number;
   } | null>(null);
 
-  const stats = useMemo(() => {
-    const users = readJson<any[]>("youthxp_users", []);
-    const posts = readJson<any[]>("youthxp_community_posts", []);
-    const completedChallenges = readJson<any[]>("youthxp_completed_challenges_details", []);
-    const enrolledInternships = readJson<any[]>("youthxp_enrolled_internships", []);
-    const registrations = readJson<any[]>("youthxp_event_registrations", []);
-    const totalXP = safeNumber(localStorage.getItem("youthxp_user_xp"), 0);
-
-    return {
-      users: users.length,
-      posts: posts.length,
-      challenges: completedChallenges.length,
-      internships: enrolledInternships.length,
-      events: registrations.length,
-      totalXP,
-    };
+  useEffect(() => {
+    apiFetch<{
+      totals: { posts: number; discussions: number; comments: number; discussionReplies: number; polls: number };
+      moderation: { activeUsers7d: number; reportedOpen: number; removedContent: number };
+    }>("/community/admin/dashboard")
+      .then((d) => {
+        if (d?.totals && d?.moderation) setCommunityStats(d);
+      })
+      .catch(() => setCommunityStats(null));
   }, []);
 
   useEffect(() => {
@@ -63,12 +70,12 @@ export default function AdminDashboard() {
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <StatCard title="Users" value={String(stats.users)} icon={Users} />
-        <StatCard title="Community Posts" value={String(stats.posts)} icon={MessageSquare} />
-        <StatCard title="Challenge Completions" value={String(stats.challenges)} icon={Trophy} />
-        <StatCard title="Enrolled Internships" value={String(stats.internships)} icon={Briefcase} />
-        <StatCard title="Event Registrations" value={String(stats.events)} icon={Calendar} />
-        <StatCard title="Total XP (current user)" value={String(stats.totalXP)} icon={Trophy} />
+        <StatCard title="Active users (7d)" value={String(communityStats?.moderation.activeUsers7d ?? 0)} icon={Users} />
+        <StatCard title="Open reports" value={String(communityStats?.moderation.reportedOpen ?? 0)} icon={ShieldAlert as any} />
+        <StatCard title="Removed content" value={String(communityStats?.moderation.removedContent ?? 0)} icon={Layers as any} />
+        <StatCard title="Community posts" value={String(communityStats?.totals.posts ?? 0)} icon={MessageSquare} />
+        <StatCard title="Discussions" value={String(communityStats?.totals.discussions ?? 0)} icon={MessageCircle as any} />
+        <StatCard title="Comments + replies" value={String((communityStats?.totals.comments ?? 0) + (communityStats?.totals.discussionReplies ?? 0))} icon={BarChart3 as any} />
       </div>
 
       {v2Stats && (

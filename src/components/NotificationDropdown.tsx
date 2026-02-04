@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useNavigate } from "react-router-dom";
 
 const notificationIcons = {
   like: Heart,
@@ -25,6 +26,7 @@ const notificationColors = {
 export function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { 
     notifications, 
     unreadCount, 
@@ -33,6 +35,16 @@ export function NotificationDropdown() {
     clearNotification,
     getTimeAgo 
   } = useNotifications(user?.id || "guest");
+
+  const handleOpenLink = (link: string | null | undefined) => {
+    if (!link) return;
+    const s = String(link);
+    if (s.startsWith("http://") || s.startsWith("https://")) {
+      window.open(s, "_blank", "noopener,noreferrer");
+      return;
+    }
+    navigate(s);
+  };
 
   return (
     <div className="relative">
@@ -89,7 +101,14 @@ export function NotificationDropdown() {
                   </div>
                 ) : (
                   notifications.map((notification) => {
-                    const Icon = notificationIcons[notification.type];
+                    const Icon = (notificationIcons as any)[notification.type] || Bell;
+                    const colorClass = (notificationColors as any)[notification.type] || "text-muted-foreground bg-muted";
+                    const primaryText = notification.title || "Notification";
+                    const secondaryText = notification.body;
+                    const avatarInitials = (notification.meta && (notification.meta as any).actorName)
+                      ? String((notification.meta as any).actorName).split(" ").map((n: string) => n[0]).join("").toUpperCase()
+                      : "";
+                    const createdAt = notification.createdAt;
                     return (
                       <motion.div
                         key={notification.id}
@@ -97,22 +116,20 @@ export function NotificationDropdown() {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: 20 }}
-                        onClick={() => markAsRead(notification.id)}
+                        onClick={() => {
+                          markAsRead(notification.id);
+                          handleOpenLink(notification.link);
+                          setIsOpen(false);
+                        }}
                         className={`flex items-start gap-3 p-4 border-b border-border cursor-pointer transition-colors hover:bg-muted/50 group ${
-                          !notification.read ? "bg-primary/5" : ""
+                          !notification.readAt ? "bg-primary/5" : ""
                         }`}
                       >
                         {/* Avatar */}
                         <div className="relative shrink-0">
-                          {notification.type === "achievement" ? (
-                            <div className="w-10 h-10 rounded-full bg-level-gold/20 flex items-center justify-center text-xl">
-                              🏆
-                            </div>
-                          ) : (
-                            <UserAvatar initials={notification.userAvatar} size="sm" className="w-10 h-10" />
-                          )}
+                          <UserAvatar initials={avatarInitials} size="sm" className="w-10 h-10" />
                           <div
-                            className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center ${notificationColors[notification.type]}`}
+                            className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center ${colorClass}`}
                           >
                             <Icon className="w-3 h-3" />
                           </div>
@@ -121,19 +138,17 @@ export function NotificationDropdown() {
                         {/* Content */}
                         <div className="flex-1 min-w-0">
                           <p className="text-sm">
-                            <span className="font-semibold">{notification.userName}</span>{" "}
-                            <span className="text-muted-foreground">
-                              {notification.content}
-                            </span>
+                            <span className="font-semibold">{primaryText}</span>{" "}
+                            <span className="text-muted-foreground">{secondaryText}</span>
                           </p>
                           <p className="text-xs text-muted-foreground mt-1">
-                            {getTimeAgo(notification.timestamp)}
+                            {getTimeAgo(createdAt)}
                           </p>
                         </div>
 
                         {/* Actions */}
                         <div className="flex items-center gap-2 shrink-0">
-                          {!notification.read && (
+                          {!notification.readAt && (
                             <div className="w-2 h-2 bg-primary rounded-full" />
                           )}
                           <button

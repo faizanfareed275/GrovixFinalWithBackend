@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, MessageSquare, Flame, ThumbsUp, Send, 
-  MoreHorizontal, Trash2, Clock, Eye 
+  MoreHorizontal, Trash2, Clock, Eye, Flag 
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,9 @@ interface DiscussionDetailProps {
   onLikeReply: (discussionId: number, replyId: number) => void;
   onDeleteReply: (discussionId: number, replyId: number) => void;
   onDeleteDiscussion: (discussionId: number) => void;
+  onReportDiscussion?: (discussionId: number) => void;
+  onReportReply?: (discussionId: number, replyId: number) => void;
+  onReportUser?: (userId: string) => void;
 }
 
 export function DiscussionDetail({
@@ -61,6 +64,9 @@ export function DiscussionDetail({
   onLikeReply,
   onDeleteReply,
   onDeleteDiscussion,
+  onReportDiscussion,
+  onReportReply,
+  onReportUser,
 }: DiscussionDetailProps) {
   const { user } = useAuth();
   const [rootReplyContent, setRootReplyContent] = useState("");
@@ -163,14 +169,14 @@ export function DiscussionDetail({
                 variant="icon"
               />
             )}
-            {isOwner && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="p-2 rounded-full hover:bg-muted transition-colors">
-                    <MoreHorizontal className="w-5 h-5" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="p-2 rounded-full hover:bg-muted transition-colors">
+                  <MoreHorizontal className="w-5 h-5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {isOwner ? (
                   <DropdownMenuItem
                     onClick={() => onDeleteDiscussion(discussion.id)}
                     className="text-destructive"
@@ -178,9 +184,22 @@ export function DiscussionDetail({
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Discussion
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                ) : (
+                  <>
+                    <DropdownMenuItem onClick={() => onReportDiscussion?.(discussion.id)}>
+                      <Flag className="w-4 h-4 mr-2" />
+                      Report Discussion
+                    </DropdownMenuItem>
+                    {onReportUser && (
+                      <DropdownMenuItem onClick={() => onReportUser(discussion.userId)}>
+                        <Flag className="w-4 h-4 mr-2" />
+                        Report User
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -316,6 +335,21 @@ export function DiscussionDetail({
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
                                 Delete Reply
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                        {!isReplyOwner && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button className="p-1 rounded-full hover:bg-muted transition-colors">
+                                <MoreHorizontal className="w-4 h-4" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => onReportReply?.(discussion.id, r.id)}>
+                                <Flag className="w-4 h-4 mr-2" />
+                                Report Reply
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
