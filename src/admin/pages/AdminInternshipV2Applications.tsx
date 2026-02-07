@@ -36,6 +36,7 @@ type ApplicationRow = {
   coverLetter: string | null;
   offerSubject: string | null;
   offerBody: string | null;
+  resumeFileId?: string | null;
   user: { id: string; name: string; email: string; avatarUrl: string | null; xp: number };
   batch: BatchRow | null;
 };
@@ -160,6 +161,13 @@ export default function AdminInternshipV2Applications() {
     }
   };
 
+  const downloadResume = (app: ApplicationRow) => {
+    const url = `${import.meta.env.VITE_GROVIX_API_URL || "http://localhost:4000"}/internships/${encodeURIComponent(
+      String(internshipId)
+    )}/admin/applications/${encodeURIComponent(app.id)}/resume`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="space-y-6">
       <div className="glass-card p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -233,6 +241,39 @@ export default function AdminInternshipV2Applications() {
 
               {actingId === a.id && (
                 <div className="mt-4 rounded-xl border border-border p-4 space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-lg bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Portfolio</div>
+                      <div className="text-sm break-words">{a.portfolio || "—"}</div>
+                    </div>
+                    <div className="rounded-lg bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">Location / Phone</div>
+                      <div className="text-sm break-words">
+                        {a.location || "—"}
+                        {a.phone ? ` • ${a.phone}` : ""}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">LinkedIn</div>
+                      <div className="text-sm break-words">{a.linkedin || "—"}</div>
+                    </div>
+                    <div className="rounded-lg bg-muted/20 p-3">
+                      <div className="text-xs text-muted-foreground">GitHub</div>
+                      <div className="text-sm break-words">{a.github || "—"}</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-muted/20 p-3">
+                    <div className="text-xs text-muted-foreground">Cover Letter</div>
+                    <div className="text-sm whitespace-pre-wrap break-words">{a.coverLetter || "—"}</div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button variant="outline" onClick={() => downloadResume(a)} disabled={!a.resumeFileId}>
+                      Download Resume
+                    </Button>
+                  </div>
+
                   <div className="grid sm:grid-cols-2 gap-3">
                     <div>
                       <div className="text-sm font-medium mb-1">Assign Batch</div>

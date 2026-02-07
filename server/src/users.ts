@@ -1,6 +1,8 @@
 import { Router } from "express";
+import bcrypt from "bcrypt";
+import { z } from "zod";
 import { prisma } from "./db";
-import { requireAuth } from "./middleware/auth";
+import { requireAdmin, requireAuth } from "./middleware/auth";
 
 const router = Router();
 
@@ -126,6 +128,181 @@ router.get("/", async (req, res) => {
   });
 
   return res.json({ users: users.map((u: any) => toPublicProfile(u)) });
+});
+
+router.get("/admin/list", requireAdmin, async (req: any, res) => {
+  const q = String(req.query?.q || "").trim();
+  const takeRaw = Number(req.query?.limit || 200);
+  const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 500) : 200;
+
+  const users = await prisma.user.findMany({
+    where: q
+      ? {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+          ],
+        }
+      : undefined,
+    orderBy: [{ createdAt: "desc" }],
+    take,
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      xp: true,
+      isBanned: true,
+      bannedUntil: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({
+    users: users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      xp: u.xp,
+      isBanned: !!u.isBanned,
+      bannedUntil: u.bannedUntil ? u.bannedUntil.toISOString() : null,
+      createdAt: u.createdAt.toISOString(),
+    })),
+  });
+});
+
+router.post("/admin/create", requireAdmin, async (req: any, res) => {
+  const schema = z.object({
+    name: z.string().min(1).max(120),
+    email: z.string().email(),
+    password: z.string().min(6).max(200),
+    role: z.enum(["USER", "ADMIN"]).default("USER"),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_request" });
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) return res.status(409).json({ error: "email_already_exists" });
+
+  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+  const created = await prisma.user.create({
+    data: {
+      email,
+      name: parsed.data.name.trim(),
+      passwordHash,
+      role: parsed.data.role,
+    },
+    select: { id: true, email: true, name: true, role: true, xp: true, isBanned: true, bannedUntil: true, createdAt: true },
+  });
+
+  return res.json({
+    user: {
+      id: created.id,
+      email: created.email,
+      name: created.name,
+      role: created.role,
+      xp: created.xp,
+      isBanned: !!created.isBanned,
+      bannedUntil: created.bannedUntil ? created.bannedUntil.toISOString() : null,
+      createdAt: created.createdAt.toISOString(),
+    },
+  });
+});
+
+router.get("/admin/:id", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      xp: true,
+      isBanned: true,
+      bannedUntil: true,
+      createdAt: true,
+    },
+  });
+  if (!user) return res.status(404).json({ error: "not_found" });
+  return res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      xp: user.xp,
+      isBanned: !!user.isBanned,
+      bannedUntil: user.bannedUntil ? user.bannedUntil.toISOString() : null,
+      createdAt: user.createdAt.toISOString(),
+    },
+  });
+});
+
+router.patch("/admin/:id", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+
+  const schema = z
+    .object({
+      role: z.enum(["USER", "ADMIN"]).optional(),
+      isBanned: z.boolean().optional(),
+      bannedUntil: z.string().datetime().nullable().optional(),
+      banReason: z.string().max(1000).nullable().optional(),
+    })
+    .strict();
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_request" });
+
+  const data: any = {};
+  if (parsed.data.role) data.role = parsed.data.role;
+  if (typeof parsed.data.isBanned === "boolean") {
+    data.isBanned = parsed.data.isBanned;
+    data.bannedAt = parsed.data.isBanned ? new Date() : null;
+    if (!parsed.data.isBanned) {
+      data.bannedUntil = null;
+      data.banReason = null;
+      data.bannedBy = null;
+    }
+  }
+  if (parsed.data.bannedUntil !== undefined) {
+    data.bannedUntil = parsed.data.bannedUntil ? new Date(parsed.data.bannedUntil) : null;
+  }
+  if (parsed.data.banReason !== undefined) {
+    data.banReason = parsed.data.banReason;
+  }
+  if (Object.keys(data).length === 0) return res.json({ ok: true });
+
+  data.bannedBy = String(req.auth?.userId || "") || null;
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data,
+    select: { id: true, email: true, name: true, role: true, xp: true, isBanned: true, bannedUntil: true, createdAt: true },
+  });
+
+  return res.json({
+    user: {
+      id: updated.id,
+      email: updated.email,
+      name: updated.name,
+      role: updated.role,
+      xp: updated.xp,
+      isBanned: !!updated.isBanned,
+      bannedUntil: updated.bannedUntil ? updated.bannedUntil.toISOString() : null,
+      createdAt: updated.createdAt.toISOString(),
+    },
+  });
+});
+
+router.delete("/admin/:id", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  await prisma.user.delete({ where: { id } });
+  return res.json({ ok: true });
 });
 
 router.get("/me", requireAuth, async (req: any, res) => {

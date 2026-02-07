@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Flag, RefreshCcw, X } from "lucide-react";
+import { Copy, Download, ExternalLink, Flag, RefreshCcw, Server, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +46,39 @@ type Report = {
   resolutionActionId: string | null;
   snapshot?: any;
 };
+
+function buildOpenContentPath(r: Report) {
+  if (r.targetType === "USER") {
+    return r.targetUserId ? `/candidates/${encodeURIComponent(r.targetUserId)}` : null;
+  }
+
+  if (!r.targetLegacyId) return null;
+
+  if (r.targetType === "POST") {
+    return `/community?postId=${encodeURIComponent(String(r.targetLegacyId))}`;
+  }
+
+  if (r.targetType === "POST_COMMENT") {
+    const commentId = r.targetNodeId;
+    return `/community?postId=${encodeURIComponent(String(r.targetLegacyId))}${commentId ? `&commentId=${encodeURIComponent(String(commentId))}` : ""}`;
+  }
+
+  if (r.targetType === "DISCUSSION") {
+    return `/community?discussionId=${encodeURIComponent(String(r.targetLegacyId))}`;
+  }
+
+  if (r.targetType === "DISCUSSION_REPLY") {
+    const replyId = r.targetNodeId;
+    return `/community?discussionId=${encodeURIComponent(String(r.targetLegacyId))}${replyId ? `&replyId=${encodeURIComponent(String(replyId))}` : ""}`;
+  }
+
+  return null;
+}
+
+function toAbsoluteUrl(path: string) {
+  if (typeof window === "undefined") return path;
+  return `${window.location.origin}${path.startsWith("/") ? "" : "/"}${path}`;
+}
 
 function csvEscape(value: any) {
   if (value === null || value === undefined) return "";
@@ -117,6 +150,10 @@ function buildAdminReportsQuery(params: { status: ReportStatus; targetType: stri
   return q ? `?${q}` : "";
 }
 
+function buildAdminReportsExportUrl(params: { status: ReportStatus; targetType: string; severity: string; q: string }) {
+  return `/community/admin/reports/export.csv${buildAdminReportsQuery(params)}`;
+}
+
 export default function AdminModerationReports() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<ReportStatus>("OPEN");
@@ -185,9 +222,40 @@ export default function AdminModerationReports() {
     }
   };
 
+  const exportServerCsv = () => {
+    try {
+      const url = buildAdminReportsExportUrl({ status, targetType, severity, q: debouncedQuery });
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      toast.error("Failed to export CSV");
+    }
+  };
+
   const openDetails = (r: Report) => {
     setSelected(r);
     setDetailsOpen(true);
+  };
+
+  const openContent = (r: Report) => {
+    const path = buildOpenContentPath(r);
+    if (!path) return toast.error("No target link available");
+    navigate(path);
+  };
+
+  const copyContentLink = async (r: Report) => {
+    const path = buildOpenContentPath(r);
+    if (!path) return toast.error("No target link available");
+    try {
+      await navigator.clipboard.writeText(toAbsoluteUrl(path));
+      toast.success("Link copied");
+    } catch {
+      toast.error("Failed to copy link");
+    }
   };
 
   const dismissReport = async (r: Report) => {
@@ -298,6 +366,10 @@ export default function AdminModerationReports() {
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </Button>
+            <Button variant="outline" onClick={exportServerCsv}>
+              <Server className="w-4 h-4 mr-2" />
+              Export (server)
+            </Button>
             <Button variant="outline" onClick={() => fetchReports().catch(() => {})} disabled={loading}>
               <RefreshCcw className="w-4 h-4 mr-2" />
               Refresh
@@ -384,7 +456,13 @@ export default function AdminModerationReports() {
               <div className="col-span-1 text-sm text-muted-foreground">{r.severity}</div>
               <div className="col-span-2 text-sm text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</div>
               <div className="col-span-2 flex justify-end gap-2">
-                {r.status === "OPEN" && (
+                {buildOpenContentPath(r) && (
+                  <Button size="sm" variant="ghost" onClick={() => openContent(r)}>
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Open
+                  </Button>
+                )}
+                {r.status === "OPEN" ? (
                   <>
                     <Button size="sm" variant="outline" onClick={() => startAction(r)}>
                       Moderate
@@ -393,8 +471,7 @@ export default function AdminModerationReports() {
                       Dismiss
                     </Button>
                   </>
-                )}
-                {r.status !== "OPEN" && (
+                ) : (
                   <Button size="sm" variant="ghost" onClick={() => openDetails(r)}>
                     View
                   </Button>
@@ -428,6 +505,22 @@ export default function AdminModerationReports() {
                   </div>
                   <div className="text-xs text-muted-foreground mt-2">Target user</div>
                   <div className="text-sm break-all">{selected.targetUserId || ""}</div>
+                  <div className="mt-4">
+                    <div className="flex flex-wrap gap-2">
+                      {buildOpenContentPath(selected) && (
+                        <Button variant="outline" onClick={() => openContent(selected)}>
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          Open content
+                        </Button>
+                      )}
+                      {buildOpenContentPath(selected) && (
+                        <Button variant="outline" onClick={() => copyContentLink(selected)}>
+                          <Copy className="w-4 h-4 mr-2" />
+                          Copy link
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="glass-card p-4">

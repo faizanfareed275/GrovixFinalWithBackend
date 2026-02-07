@@ -270,6 +270,7 @@ export function DiscussionDetail({
                   const isReplyOwner = user?.id === r.userId;
                   return (
                     <motion.div
+                      id={`discussion-reply-${discussion.id}-${r.id}`}
                       key={r.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}

@@ -1,29 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { readJson, writeJson } from "@/admin/lib/storage";
+import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
 
 type Badge = {
   id: string;
   name: string;
   icon: string;
-  earnedAt: string;
   description: string;
 };
 
 type ProfileData = {
   name: string;
   bio: string;
-  avatar: string;
+  avatarUrl: string;
   skills: string[];
   socialLinks: {
     github: string;
@@ -33,13 +25,10 @@ type ProfileData = {
   };
 };
 
-const PROFILE_KEY = "youthxp_profile";
-const BADGES_KEY = "youthxp_earned_badges";
-
 const defaultProfile: ProfileData = {
   name: "Guest User",
   bio: "",
-  avatar: "GU",
+  avatarUrl: "",
   skills: [],
   socialLinks: { github: "", linkedin: "", twitter: "", website: "" },
 };
@@ -48,66 +37,57 @@ export default function AdminProfileBadges() {
   const [profile, setProfile] = useState<ProfileData>(defaultProfile);
   const [badges, setBadges] = useState<Badge[]>([]);
 
-  const [badgeDialogOpen, setBadgeDialogOpen] = useState(false);
-  const [badgeForm, setBadgeForm] = useState({ id: "", name: "", icon: "⭐", description: "" });
-
   useEffect(() => {
-    setProfile(readJson<ProfileData>(PROFILE_KEY, defaultProfile));
-    setBadges(readJson<Badge[]>(BADGES_KEY, []));
+    apiFetch<{ user: any }>("/users/me")
+      .then((d) => {
+        const u = d?.user;
+        if (!u) return;
+        setProfile({
+          name: String(u.name || ""),
+          bio: String(u.bio || ""),
+          avatarUrl: String(u.avatarUrl || ""),
+          skills: Array.isArray(u.skills) ? u.skills : [],
+          socialLinks: {
+            github: String(u.socialLinks?.github || ""),
+            linkedin: String(u.socialLinks?.linkedin || ""),
+            twitter: String(u.socialLinks?.twitter || ""),
+            website: String(u.socialLinks?.website || ""),
+          },
+        });
+        setBadges(Array.isArray(u.badges) ? u.badges : []);
+      })
+      .catch(() => {
+        setProfile(defaultProfile);
+        setBadges([]);
+      });
   }, []);
-
-  const persistProfile = (next: ProfileData) => {
-    setProfile(next);
-    writeJson(PROFILE_KEY, next);
-  };
-
-  const persistBadges = (next: Badge[]) => {
-    setBadges(next);
-    writeJson(BADGES_KEY, next);
-  };
 
   const skillsText = useMemo(() => profile.skills.join(", "), [profile.skills]);
 
-  const handleSaveProfile = () => {
-    persistProfile(profile);
-    toast.success("Profile updated");
-  };
-
-  const handleAddBadge = () => {
-    const id = badgeForm.id.trim() || `badge_${Date.now()}`;
-    if (!badgeForm.name.trim()) return;
-
-    if (badges.some(b => b.id === id)) return;
-
-    const next: Badge = {
-      id,
-      name: badgeForm.name.trim(),
-      icon: badgeForm.icon || "⭐",
-      description: badgeForm.description.trim(),
-      earnedAt: new Date().toISOString(),
-    };
-
-    persistBadges([next, ...badges]);
-    setBadgeDialogOpen(false);
-    setBadgeForm({ id: "", name: "", icon: "⭐", description: "" });
-    toast.success("Badge added");
-  };
-
-  const handleDeleteBadge = (id: string) => {
-    persistBadges(badges.filter(b => b.id !== id));
-    toast.success("Badge removed");
-  };
-
-  const handleClearBadges = () => {
-    persistBadges([]);
-    toast.success("Badges cleared");
+  const handleSaveProfile = async () => {
+    try {
+      await apiFetch("/users/me", {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: profile.name,
+          avatarUrl: profile.avatarUrl,
+          bio: profile.bio,
+          skills: profile.skills,
+          socialLinks: profile.socialLinks,
+        }),
+      });
+      toast.success("Profile updated");
+      window.dispatchEvent(new Event("profile-updated"));
+    } catch {
+      toast.error("Failed to update profile");
+    }
   };
 
   return (
     <div className="space-y-6">
       <div className="glass-card p-6">
         <h1 className="text-2xl font-display font-bold">Profile & Badges</h1>
-        <p className="text-muted-foreground mt-1">Manage profile fields and earned badges stored in localStorage.</p>
+        <p className="text-muted-foreground mt-1">Manage profile fields stored in the database. Badges are computed automatically.</p>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -115,7 +95,6 @@ export default function AdminProfileBadges() {
           <div className="flex items-center justify-between">
             <div>
               <div className="font-display font-bold">Profile</div>
-              <div className="text-xs text-muted-foreground">{PROFILE_KEY}</div>
             </div>
             <Button variant="neon" onClick={handleSaveProfile}>
               <Save className="w-4 h-4" />
@@ -129,8 +108,8 @@ export default function AdminProfileBadges() {
               <Input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
             </div>
             <div>
-              <div className="text-sm font-medium mb-1">Avatar (initials)</div>
-              <Input value={profile.avatar} onChange={(e) => setProfile({ ...profile, avatar: e.target.value })} />
+              <div className="text-sm font-medium mb-1">Avatar URL</div>
+              <Input value={profile.avatarUrl} onChange={(e) => setProfile({ ...profile, avatarUrl: e.target.value })} />
             </div>
           </div>
 
@@ -181,16 +160,7 @@ export default function AdminProfileBadges() {
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
             <div>
               <div className="font-display font-bold">Badges</div>
-              <div className="text-xs text-muted-foreground">{BADGES_KEY}</div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setBadgeDialogOpen(true)}>
-                <Plus className="w-4 h-4" />
-                Add
-              </Button>
-              <Button variant="destructive" onClick={handleClearBadges}>
-                Clear
-              </Button>
+              <div className="text-xs text-muted-foreground">Computed from activity</div>
             </div>
           </div>
 
@@ -204,11 +174,7 @@ export default function AdminProfileBadges() {
                     <span className="text-xs text-muted-foreground">({b.id})</span>
                   </div>
                   <div className="text-sm text-muted-foreground mt-1 break-words">{b.description}</div>
-                  <div className="text-xs text-muted-foreground mt-2">Earned: {b.earnedAt}</div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => handleDeleteBadge(b.id)}>
-                  <Trash2 className="w-4 h-4" />
-                </Button>
               </div>
             ))}
 
@@ -218,42 +184,6 @@ export default function AdminProfileBadges() {
           </div>
         </div>
       </div>
-
-      <Dialog open={badgeDialogOpen} onOpenChange={setBadgeDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Badge</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div>
-              <div className="text-sm font-medium mb-1">ID (optional)</div>
-              <Input value={badgeForm.id} onChange={(e) => setBadgeForm({ ...badgeForm, id: e.target.value })} placeholder="e.g. first_challenge" />
-            </div>
-            <div>
-              <div className="text-sm font-medium mb-1">Name</div>
-              <Input value={badgeForm.name} onChange={(e) => setBadgeForm({ ...badgeForm, name: e.target.value })} placeholder="Badge name" />
-            </div>
-            <div>
-              <div className="text-sm font-medium mb-1">Icon (emoji)</div>
-              <Input value={badgeForm.icon} onChange={(e) => setBadgeForm({ ...badgeForm, icon: e.target.value })} placeholder="⭐" />
-            </div>
-            <div>
-              <div className="text-sm font-medium mb-1">Description</div>
-              <textarea
-                value={badgeForm.description}
-                onChange={(e) => setBadgeForm({ ...badgeForm, description: e.target.value })}
-                className="w-full h-24 p-3 rounded-lg bg-muted/20 border border-border focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="flex gap-2">
-            <Button variant="outline" onClick={() => setBadgeDialogOpen(false)}>Cancel</Button>
-            <Button variant="neon" onClick={handleAddBadge}>Add</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

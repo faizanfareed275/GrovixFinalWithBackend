@@ -1,6 +1,9 @@
 import { Router } from "express";
+import bcrypt from "bcrypt";
 import nodemailer from "nodemailer";
 import { randomBytes } from "crypto";
+import QRCode from "qrcode";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { prisma } from "./db";
 import { requireAuth } from "./middleware/auth";
 import { requireAdmin } from "./middleware/auth";
@@ -35,7 +38,14 @@ function getSmtpConfig(): SmtpConfig | null {
 function internshipCodeFromId(id: number, now: Date = new Date()) {
   const year = now.getFullYear();
   const seq = String(id).padStart(4, "0");
-  return `INT-${year}-${seq}`;
+  return `GROV-INT-${year}-${seq}`;
+}
+
+function batchCodeFromInternship(internshipCode: string, batchSeq: number, now: Date = new Date()) {
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yy = String(now.getFullYear()).slice(-2);
+  const seq = String(batchSeq).padStart(2, "0");
+  return `GROV-BAT-${internshipCode}-${mm}${yy}-${seq}`;
 }
 
 function batchMonthCode(now: Date = new Date()) {
@@ -53,36 +63,230 @@ async function ensureInternshipCode(internshipId: number): Promise<string> {
   return code;
 }
 
-function pdfPlaceholderBytes(label: string = "PLACEHOLDER PDF") {
-  const safeLabel = label.replace(/[()\\]/g, "");
-  const content = `BT /F1 28 Tf 120 420 Td (${safeLabel}) Tj ET\n`;
-  const contentLength = Buffer.byteLength(content, "utf8");
-
-  const objects = [
-    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
-    `4 0 obj\n<< /Length ${contentLength} >>\nstream\n${content}endstream\nendobj\n`,
-    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
-  ];
-
-  let offset = Buffer.byteLength("%PDF-1.4\n", "utf8");
-  const offsets = [0];
-  for (const obj of objects) {
-    offsets.push(offset);
-    offset += Buffer.byteLength(obj, "utf8");
-  }
-
-  const xrefOffset = offset;
-  const xrefLines = ["xref\n", `0 ${offsets.length}\n`, "0000000000 65535 f \n"];
-  for (let i = 1; i < offsets.length; i += 1) {
-    xrefLines.push(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
-  }
-
-  const trailer = `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  const raw = `%PDF-1.4\n${objects.join("")}${xrefLines.join("")}${trailer}`;
-  return Buffer.from(raw, "utf8");
+async function ensureBatchCode(batchId: number): Promise<string> {
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: batchId }, select: { batchCode: true, internshipId: true, createdAt: true } });
+  if (!batch) throw new Error("Batch not found");
+  if (batch.batchCode) return batch.batchCode;
+  const internshipCode = await ensureInternshipCode(batch.internshipId);
+  const existingBatches = await prisma.internshipBatch.count({ where: { internshipId: batch.internshipId } });
+  const batchSeq = existingBatches;
+  const code = batchCodeFromInternship(internshipCode, batchSeq, batch.createdAt || new Date());
+  await prisma.internshipBatch.update({ where: { id: batchId }, data: { batchCode: code } });
+  return code;
 }
+
+async function generatePdfBytes(params: { title: string; lines: string[]; qrPayload: string }) {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([595.28, 841.89]);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const marginX = 50;
+  let y = 790;
+
+  page.drawText(params.title, {
+    x: marginX,
+    y,
+    size: 22,
+    font: fontBold,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  y -= 34;
+
+  for (const l of params.lines) {
+    page.drawText(String(l || ""), {
+      x: marginX,
+      y,
+      size: 12,
+      font,
+      color: rgb(0.15, 0.15, 0.15),
+      maxWidth: 430,
+    });
+    y -= 18;
+  }
+
+  const qrDataUrl = await QRCode.toDataURL(params.qrPayload, { margin: 1, width: 220, errorCorrectionLevel: "M" as any });
+  const b64 = qrDataUrl.split(",")[1] || "";
+  const qrBytes = Buffer.from(b64, "base64");
+  const qrImg = await doc.embedPng(qrBytes);
+  const qrSize = 160;
+  page.drawImage(qrImg, {
+    x: 595.28 - marginX - qrSize,
+    y: 841.89 - marginX - qrSize,
+    width: qrSize,
+    height: qrSize,
+  });
+
+  page.drawText("Scan to verify", {
+    x: 595.28 - marginX - qrSize,
+    y: 841.89 - marginX - qrSize - 16,
+    size: 10,
+    font,
+    color: rgb(0.25, 0.25, 0.25),
+  });
+
+  const bytes = await doc.save();
+  return Buffer.from(bytes);
+}
+
+router.get("/admin/v2/stats", requireAdmin, async (_req: any, res) => {
+  const [pendingAttempts, lockedAssignments, activeEnrollments, pendingApplications] = await Promise.all([
+    prisma.internshipTaskAttempt.count({ where: { gradeStatus: "PENDING" as any } as any }),
+    prisma.internshipTaskAssignment.count({ where: { status: "LOCKED" as any } as any }),
+    prisma.internshipEnrollment.count({ where: { status: "ACTIVE" as any } as any }),
+    prisma.internshipApplication.count({ where: { status: "pending" as any } as any }),
+  ]);
+
+  return res.json({
+    ok: true,
+    stats: {
+      pendingAttempts,
+      lockedAssignments,
+      activeEnrollments,
+      pendingApplications,
+    },
+  });
+});
+
+router.get("/admin/v2/analytics", requireAdmin, async (req: any, res) => {
+  const internshipIdRaw = req.query?.internshipId;
+  const internshipId = internshipIdRaw ? Number(internshipIdRaw) : null;
+  if (internshipIdRaw && !Number.isFinite(internshipId as any)) return res.status(400).json({ error: "invalid_internship_id" });
+
+  const internships = await prisma.internship.findMany({
+    where: Number.isFinite(internshipId as any) ? { id: internshipId as any } : undefined,
+    orderBy: { createdAt: "desc" },
+    select: { id: true, title: true, company: true, internshipCode: true },
+    take: 100,
+  });
+
+  const internshipIds = internships.map((i) => i.id);
+  if (!internshipIds.length) return res.json({ ok: true, internships: [] });
+
+  const [apps, enrollments, batches] = await Promise.all([
+    prisma.internshipApplication.findMany({
+      where: { internshipId: { in: internshipIds } },
+      select: { internshipId: true, batchId: true, status: true },
+      take: 20000,
+    }),
+    prisma.internshipEnrollment.findMany({
+      where: { internshipId: { in: internshipIds } },
+      select: { internshipId: true, batchId: true, status: true },
+      take: 20000,
+    }),
+    prisma.internshipBatch.findMany({
+      where: { internshipId: { in: internshipIds } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, internshipId: true, name: true, batchCode: true, startDate: true, endDate: true, status: true },
+      take: 2000,
+    }),
+  ]);
+
+  type Counter = { pending: number; approved: number; rejected: number; other: number };
+  function emptyCounter(): Counter {
+    return { pending: 0, approved: 0, rejected: 0, other: 0 };
+  }
+  function bump(counter: Counter, status: any) {
+    const s = String(status || "").toLowerCase();
+    if (s === "pending") counter.pending += 1;
+    else if (s === "approved") counter.approved += 1;
+    else if (s === "rejected") counter.rejected += 1;
+    else counter.other += 1;
+  }
+
+  const appsByInternship = new Map<number, Counter>();
+  const appsByBatch = new Map<number, Counter>();
+  for (const a of apps as any[]) {
+    const iid = Number(a.internshipId);
+    if (Number.isFinite(iid)) {
+      const c = appsByInternship.get(iid) || emptyCounter();
+      bump(c, a.status);
+      appsByInternship.set(iid, c);
+    }
+    const bid = a.batchId === null || a.batchId === undefined ? null : Number(a.batchId);
+    if (bid !== null && Number.isFinite(bid)) {
+      const c = appsByBatch.get(bid) || emptyCounter();
+      bump(c, a.status);
+      appsByBatch.set(bid, c);
+    }
+  }
+
+  const enrollByInternship = new Map<number, { active: number; frozen: number; terminated: number; completed: number; other: number }>();
+  const enrollByBatch = new Map<number, { active: number; frozen: number; terminated: number; completed: number; other: number }>();
+  function emptyEnroll() {
+    return { active: 0, frozen: 0, terminated: 0, completed: 0, other: 0 };
+  }
+  function bumpEnroll(obj: any, status: any) {
+    const s = String(status || "").toUpperCase();
+    if (s === "ACTIVE") obj.active += 1;
+    else if (s === "FROZEN") obj.frozen += 1;
+    else if (s === "TERMINATED") obj.terminated += 1;
+    else if (s === "COMPLETED") obj.completed += 1;
+    else obj.other += 1;
+  }
+
+  for (const e of enrollments as any[]) {
+    const iid = Number(e.internshipId);
+    if (Number.isFinite(iid)) {
+      const c = enrollByInternship.get(iid) || emptyEnroll();
+      bumpEnroll(c, e.status);
+      enrollByInternship.set(iid, c);
+    }
+    const bid = e.batchId === null || e.batchId === undefined ? null : Number(e.batchId);
+    if (bid !== null && Number.isFinite(bid)) {
+      const c = enrollByBatch.get(bid) || emptyEnroll();
+      bumpEnroll(c, e.status);
+      enrollByBatch.set(bid, c);
+    }
+  }
+
+  const batchesByInternship = new Map<number, any[]>();
+  for (const b of batches as any[]) {
+    const iid = Number(b.internshipId);
+    if (!Number.isFinite(iid)) continue;
+    const list = batchesByInternship.get(iid) || [];
+    list.push(b);
+    batchesByInternship.set(iid, list);
+  }
+
+  const out = internships.map((i) => {
+    const appsC = appsByInternship.get(i.id) || emptyCounter();
+    const enC = enrollByInternship.get(i.id) || emptyEnroll();
+    const totalEnrollments = enC.active + enC.frozen + enC.terminated + enC.completed + enC.other;
+    const completionRate = totalEnrollments > 0 ? Math.round((enC.completed / totalEnrollments) * 100) : 0;
+
+    const batchRows = (batchesByInternship.get(i.id) || []).map((b) => {
+      const a = appsByBatch.get(b.id) || emptyCounter();
+      const e = enrollByBatch.get(b.id) || emptyEnroll();
+      const total = e.active + e.frozen + e.terminated + e.completed + e.other;
+      const rate = total > 0 ? Math.round((e.completed / total) * 100) : 0;
+      return {
+        id: b.id,
+        batchCode: b.batchCode,
+        name: b.name,
+        status: b.status,
+        startDate: b.startDate ? new Date(b.startDate as any).toISOString() : null,
+        endDate: b.endDate ? new Date(b.endDate as any).toISOString() : null,
+        applications: a,
+        enrollments: e,
+        completionRate: rate,
+      };
+    });
+
+    return {
+      id: i.id,
+      title: i.title,
+      company: i.company,
+      internshipCode: i.internshipCode || null,
+      applications: appsC,
+      enrollments: enC,
+      completionRate,
+      batches: batchRows,
+    };
+  });
+
+  return res.json({ ok: true, internships: out });
+});
 
 async function generateCertificateCode(now: Date = new Date()) {
   const year = now.getFullYear();
@@ -125,7 +329,17 @@ async function maybeIssueLegacyCertificate(internshipId: number, userId: string)
   if (lastAt.getTime() > enrollment.endDate.getTime()) return null;
 
   const certificateCode = await generateCertificateCode(now);
-  const pdf = pdfPlaceholderBytes();
+  const webOrigin = process.env.GROVIX_WEB_ORIGIN || "http://localhost:8080";
+  const qrPayload = `${webOrigin}/verify/certificate?code=${encodeURIComponent(certificateCode)}`;
+  const pdf = await generatePdfBytes({
+    title: "Internship Completion Certificate",
+    lines: [
+      `Certificate Code: ${certificateCode}`,
+      `Issued At: ${now.toISOString()}`,
+      `Enrollment: ${String(enrollment.id)}`,
+    ],
+    qrPayload,
+  });
   const file = await prisma.storedFile.create({
     data: {
       purpose: "CERTIFICATE" as any,
@@ -135,8 +349,6 @@ async function maybeIssueLegacyCertificate(internshipId: number, userId: string)
       bytes: pdf,
     } as any,
   });
-
-  const qrPayload = `CERT:${certificateCode}`;
 
   const cert = await prisma.internshipCertificate.create({
     data: {
@@ -257,7 +469,17 @@ export async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) 
   if (lastPassedAtMs > endMs) return null;
 
   const certificateCode = await generateCertificateCode(new Date());
-  const pdf = pdfPlaceholderBytes();
+  const webOrigin = process.env.GROVIX_WEB_ORIGIN || "http://localhost:8080";
+  const qrPayload = `${webOrigin}/verify/certificate?code=${encodeURIComponent(certificateCode)}`;
+  const pdf = await generatePdfBytes({
+    title: "Internship Completion Certificate",
+    lines: [
+      `Certificate Code: ${certificateCode}`,
+      `Issued At: ${new Date().toISOString()}`,
+      `Enrollment: ${String(enrollment.id)}`,
+    ],
+    qrPayload,
+  });
   const file = await prisma.storedFile.create({
     data: {
       purpose: "CERTIFICATE" as any,
@@ -267,8 +489,6 @@ export async function maybeIssueV2CertificateByEnrollment(enrollmentId: string) 
       bytes: pdf,
     } as any,
   });
-
-  const qrPayload = `CERT:${certificateCode}`;
 
   const cert = await prisma.internshipCertificate.create({
     data: {
@@ -331,57 +551,34 @@ export async function seedAssignmentsForEnrollment(enrollmentId: string) {
   if (!enrollment) return;
 
   const templates = await prisma.internshipTaskTemplate.findMany({
-    where: { internshipId: enrollment.internshipId, badgeLevel: enrollment.currentBadge as any },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    where: { internshipId: enrollment.internshipId },
+    orderBy: { badgeLevel: "asc" },
   });
 
-  if (!templates.length) return;
+  for (const tpl of templates) {
+    const exists = await prisma.internshipTaskAssignment.findUnique({
+      where: { enrollmentId_templateId: { enrollmentId, templateId: tpl.id } },
+    });
+    if (exists) continue;
 
-  const start = enrollment.startDate instanceof Date ? enrollment.startDate : new Date(enrollment.startDate as any);
-
-  const templateIds = (templates as any[]).map((t) => String(t.id));
-  const existing = await prisma.internshipTaskAssignment.findMany({
-    where: {
-      enrollmentId,
-      templateId: { in: templateIds } as any,
-    } as any,
-    select: { templateId: true },
-  });
-  const existingSet = new Set(existing.map((e: any) => String(e.templateId)));
-
-  const toCreate: any[] = [];
-  for (const t of templates as any[]) {
-    if (existingSet.has(String(t.id))) continue;
-    const offsetDays = t.unlockOffsetDays === null || t.unlockOffsetDays === undefined ? null : Number(t.unlockOffsetDays);
-    const periodDays = t.timePeriodDays === null || t.timePeriodDays === undefined ? null : Number(t.timePeriodDays);
-
-    const unlockAt = offsetDays !== null && Number.isFinite(offsetDays)
-      ? new Date(start.getTime() + offsetDays * 24 * 60 * 60 * 1000)
+    const unlockAt = tpl.unlockOffsetDays
+      ? new Date(enrollment.startDate.getTime() + tpl.unlockOffsetDays * 24 * 60 * 60 * 1000)
+      : enrollment.startDate;
+    const deadlineAt = tpl.timePeriodDays
+      ? new Date(unlockAt.getTime() + tpl.timePeriodDays * 24 * 60 * 60 * 1000)
       : null;
 
-    const deadlineAt = unlockAt && periodDays !== null && Number.isFinite(periodDays)
-      ? new Date(unlockAt.getTime() + periodDays * 24 * 60 * 60 * 1000)
-      : null;
-
-    const maxAttempts = Math.max(1, Number(t.maxAttempts || 1) || 1);
-
-    toCreate.push({
-      enrollmentId,
-      templateId: t.id,
-      unlockAt,
-      deadlineAt,
-      maxAttempts,
-      remainingAttempts: Math.max(0, maxAttempts),
-      status: "ASSIGNED" as any,
+    await prisma.internshipTaskAssignment.create({
+      data: {
+        enrollmentId,
+        templateId: tpl.id,
+        unlockAt,
+        deadlineAt,
+        maxAttempts: tpl.maxAttempts || 1,
+        remainingAttempts: tpl.maxAttempts || 1,
+      },
     });
   }
-
-  if (!toCreate.length) return;
-
-  await prisma.internshipTaskAssignment.createMany({
-    data: toCreate as any,
-    skipDuplicates: true,
-  } as any);
 }
 
 export async function recomputeAssignmentScheduleForEnrollment(enrollmentId: string) {
@@ -442,6 +639,80 @@ const badgeOrder: Record<string, number> = {
   EXPERT: 3,
 };
 
+const BADGE_LOCK_DATE = new Date("2999-01-01T00:00:00.000Z");
+
+function computeUnlockDeadline(start: Date, tpl: { unlockOffsetDays?: number | null; timePeriodDays?: number | null }) {
+  const offsetDays = tpl.unlockOffsetDays === null || tpl.unlockOffsetDays === undefined ? null : Number(tpl.unlockOffsetDays);
+  const periodDays = tpl.timePeriodDays === null || tpl.timePeriodDays === undefined ? null : Number(tpl.timePeriodDays);
+
+  const unlockAt = offsetDays !== null && Number.isFinite(offsetDays)
+    ? new Date(start.getTime() + offsetDays * 24 * 60 * 60 * 1000)
+    : start;
+
+  const deadlineAt = periodDays !== null && Number.isFinite(periodDays)
+    ? new Date(unlockAt.getTime() + periodDays * 24 * 60 * 60 * 1000)
+    : null;
+
+  return { unlockAt, deadlineAt };
+}
+
+export async function enforceV2ProgressionForEnrollment(enrollmentId: string) {
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment) return;
+
+  const start = enrollment.startDate instanceof Date ? enrollment.startDate : new Date(enrollment.startDate as any);
+  const current = String((enrollment as any).currentBadge || "BEGINNER").toUpperCase();
+  const currentRank = badgeOrder[current] ?? 0;
+
+  const assignments = await prisma.internshipTaskAssignment.findMany({
+    where: {
+      enrollmentId,
+      status: "ASSIGNED" as any,
+      passedAt: null,
+      lockedAt: null,
+    } as any,
+    include: {
+      template: { select: { badgeLevel: true, unlockOffsetDays: true, timePeriodDays: true } },
+      attempts: { select: { id: true }, take: 1 },
+    },
+    take: 1000,
+  });
+
+  for (const a of assignments as any[]) {
+    if (a.attempts && a.attempts.length > 0) continue;
+
+    const tplLevel = String(a.template?.badgeLevel || "BEGINNER").toUpperCase();
+    const tplRank = badgeOrder[tplLevel] ?? 0;
+
+    const shouldLock = tplRank > currentRank;
+    const isBadgeLocked = !!a.unlockAt && new Date(a.unlockAt as any).getTime() === BADGE_LOCK_DATE.getTime();
+
+    if (shouldLock) {
+      if (!isBadgeLocked) {
+        await prisma.internshipTaskAssignment.update({
+          where: { id: a.id },
+          data: {
+            unlockAt: BADGE_LOCK_DATE,
+            deadlineAt: null,
+          } as any,
+        });
+      }
+      continue;
+    }
+
+    if (isBadgeLocked) {
+      const next = computeUnlockDeadline(start, a.template || {});
+      await prisma.internshipTaskAssignment.update({
+        where: { id: a.id },
+        data: {
+          unlockAt: next.unlockAt,
+          deadlineAt: next.deadlineAt,
+        } as any,
+      });
+    }
+  }
+}
+
 export async function evaluateAndPromoteBadge(enrollmentId: string, actorUserId?: string | null) {
   const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
   if (!enrollment) return null;
@@ -477,7 +748,10 @@ export async function evaluateAndPromoteBadge(enrollmentId: string, actorUserId?
   const current = String((enrollment as any).currentBadge || "BEGINNER");
   const currentRank = badgeOrder[current] ?? 0;
   const bestRank = badgeOrder[bestLevel] ?? currentRank;
-  if (bestRank <= currentRank) return null;
+  if (bestRank <= currentRank) {
+    await enforceV2ProgressionForEnrollment(enrollmentId);
+    return null;
+  }
 
   const before = enrollment as any;
 
@@ -502,6 +776,8 @@ export async function evaluateAndPromoteBadge(enrollmentId: string, actorUserId?
   }
 
   await seedAssignmentsForEnrollment(enrollmentId);
+  await recomputeAssignmentScheduleForEnrollment(enrollmentId);
+  await enforceV2ProgressionForEnrollment(enrollmentId);
   return updated;
 }
 
@@ -519,7 +795,7 @@ async function ensureDefaultBatch(internshipId: number) {
   const endDate = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
   const month = batchMonthCode(now);
   const seq = "01";
-  const batchCode = `BAT-${internshipCode}-${month}-${seq}`;
+  const batchCode = `GROV-BAT-${internshipCode}-${month}-${seq}`;
 
   return await prisma.internshipBatch.create({
     data: {
@@ -621,7 +897,7 @@ router.post("/:id/admin/batches", requireAdmin, async (req, res) => {
     },
   });
   const seq = String(existingMonthCount + 1).padStart(2, "0");
-  const batchCode = `BAT-${internshipCode}-${month}-${seq}`;
+  const batchCode = `GROV-BAT-${internshipCode}-${month}-${seq}`;
 
   const status = String(req.body?.status || "DRAFT").toUpperCase();
   const capacityRaw = req.body?.capacity;
@@ -647,186 +923,147 @@ router.post("/:id/admin/batches", requireAdmin, async (req, res) => {
   return res.json({ ok: true, batch });
 });
 
-router.get("/", async (_req, res) => {
-  const items = await prisma.internship.findMany({
-    orderBy: { id: "asc" },
-  });
-  return res.json({ internships: items });
-});
-
-router.get("/admin/v2/stats", requireAdmin, async (_req: any, res) => {
-  const [pendingAttempts, lockedAssignments, activeEnrollments, pendingApplications] = await Promise.all([
-    prisma.internshipTaskAttempt.count({ where: { gradeStatus: "PENDING" as any } as any }),
-    prisma.internshipTaskAssignment.count({ where: { status: "LOCKED" as any } as any }),
-    prisma.internshipEnrollment.count({ where: { status: "ACTIVE" as any } as any }),
-    prisma.internshipApplication.count({ where: { status: "pending" as any } as any }),
-  ]);
-
-  return res.json({
-    ok: true,
-    stats: {
-      pendingAttempts,
-      lockedAssignments,
-      activeEnrollments,
-      pendingApplications,
-    },
-  });
-});
-
-router.get("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
-
-  const internship = await prisma.internship.findUnique({ where: { id } });
-  if (!internship) return res.status(404).json({ error: "not_found" });
-
-  return res.json({ internship });
-});
-
-router.put("/:id", requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
-
-  const existing = await prisma.internship.findUnique({ where: { id }, select: { internshipCode: true } });
-
-  const title = String(req.body?.title ?? "").trim();
-  const company = String(req.body?.company ?? "").trim();
-  const type = req.body?.type === "paid" ? "paid" : "free";
-  const xpRequired = Number(req.body?.xpRequired ?? 0) || 0;
-  const salaryRaw = req.body?.salary;
-  const salary = salaryRaw && String(salaryRaw).trim() ? String(salaryRaw).trim() : null;
-  const duration = String(req.body?.duration ?? "").trim();
-  const location = String(req.body?.location ?? "").trim();
-  const skills = Array.isArray(req.body?.skills) ? req.body.skills.map((s: any) => String(s)) : [];
-  const description = String(req.body?.description ?? "");
-  const applicants = Number(req.body?.applicants ?? 0) || 0;
-
-  const internshipCodeRaw = req.body?.internshipCode;
-  const internshipCodeProvided = internshipCodeRaw && String(internshipCodeRaw).trim() ? String(internshipCodeRaw).trim() : null;
-  const internshipCode = internshipCodeProvided || (existing?.internshipCode ? null : internshipCodeFromId(id));
-
-  if (!title || !company) return res.status(400).json({ error: "invalid_request" });
-
-  const internship = await prisma.internship.upsert({
-    where: { id },
-    update: {
-      ...(internshipCode ? { internshipCode } : {}),
-      title,
-      company,
-      type,
-      xpRequired,
-      salary,
-      duration,
-      location,
-      skills,
-      description,
-      applicants,
-    },
-    create: {
-      id,
-      internshipCode: internshipCodeProvided || internshipCodeFromId(id),
-      title,
-      company,
-      type,
-      xpRequired,
-      salary,
-      duration,
-      location,
-      skills,
-      description,
-      applicants,
-    },
-  });
-
-  return res.json({ ok: true, internship });
-});
-
-router.delete("/:id", requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
-
-  try {
-    await prisma.internship.delete({ where: { id } });
-  } catch {
-    // ignore
-  }
-
-  return res.json({ ok: true });
-});
-
-router.post("/:id/admin/enrollments/:enrollmentId/certificate/revoke", requireAdmin, async (req: any, res) => {
+router.post("/:id/admin/batches/:batchId/applicants/bulk", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
-  const enrollmentId = String(req.params.enrollmentId || "");
-  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+  const batchId = Number(req.params.batchId);
+  if (!Number.isFinite(internshipId) || !Number.isFinite(batchId)) return res.status(400).json({ error: "invalid_request" });
+
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: batchId } });
+  if (!batch || batch.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
 
   const actor = req.auth?.userId ? String(req.auth.userId) : null;
 
-  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
-  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+  const items = Array.isArray(req.body?.applicants) ? req.body.applicants : [];
+  const max = 500;
+  if (!items.length) return res.status(400).json({ error: "invalid_request" });
+  if (items.length > max) return res.status(400).json({ error: "too_many", max });
 
-  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
-  if (!cert) return res.status(404).json({ error: "no_certificate" });
+  const returnPasswords = req.body?.returnPasswords === undefined ? true : !!req.body.returnPasswords;
 
-  const before = cert as any;
-  const updated = await prisma.internshipCertificate.update({
-    where: { id: cert.id },
-    data: { status: "REVOKED" as any } as any,
-  });
-
-  if (actor) {
-    prisma.auditLog
-      .create({
-        data: {
-          actorUserId: actor,
-          action: "INTERNSHIP_CERTIFICATE_REVOKE",
-          entityType: "InternshipCertificate",
-          entityId: cert.id,
-          before,
-          after: updated as any,
-        },
-      })
-      .catch(() => {});
+  const normalized: any[] = [];
+  const seen = new Set<string>();
+  for (const raw of items) {
+    const email = String(raw?.email || "").trim().toLowerCase();
+    const name = String(raw?.name || raw?.fullName || "").trim();
+    if (!email || !email.includes("@") || !name) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    normalized.push({
+      email,
+      name,
+      portfolio: raw?.portfolio ?? null,
+      linkedin: raw?.linkedin ?? null,
+      github: raw?.github ?? null,
+      location: raw?.location ?? null,
+      phone: raw?.phone ?? null,
+      coverLetter: raw?.coverLetter ?? null,
+    });
   }
 
-  return res.json({ ok: true, certificate: updated });
-});
+  if (!normalized.length) return res.status(400).json({ error: "invalid_request" });
 
-router.post("/:id/admin/enrollments/:enrollmentId/certificate/restore", requireAdmin, async (req: any, res) => {
-  const internshipId = Number(req.params.id);
-  const enrollmentId = String(req.params.enrollmentId || "");
-  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+  const result = await prisma.$transaction(async (tx) => {
+    const createdUsers: any[] = [];
+    const createdApplications: any[] = [];
+    const skipped: any[] = [];
+    let applicantsDelta = 0;
 
-  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+    for (const it of normalized) {
+      let user = await tx.user.findUnique({ where: { email: it.email } });
+      let tempPassword: string | null = null;
 
-  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
-  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+      if (!user) {
+        tempPassword = randomBytes(8).toString("hex");
+        const passwordHash = await bcrypt.hash(tempPassword, 10);
+        user = await tx.user.create({
+          data: {
+            email: it.email,
+            name: it.name,
+            passwordHash,
+            role: "USER" as any,
+          } as any,
+        });
+        createdUsers.push({ userId: user.id, email: user.email, name: user.name, ...(returnPasswords ? { tempPassword } : {}) });
+      }
 
-  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
-  if (!cert) return res.status(404).json({ error: "no_certificate" });
+      const existing = await tx.internshipApplication.findUnique({
+        where: { batchId_userId: { batchId, userId: user.id } },
+      });
 
-  const before = cert as any;
-  const updated = await prisma.internshipCertificate.update({
-    where: { id: cert.id },
-    data: { status: "VALID" as any } as any,
-  });
+      if (existing && String((existing as any).status || "") !== "rejected") {
+        skipped.push({ email: it.email, reason: "already_exists" });
+        continue;
+      }
 
-  if (actor) {
-    prisma.auditLog
-      .create({
+      const wasRejected = !!existing && String((existing as any).status || "") === "rejected";
+
+      const application = existing
+        ? await (tx as any).internshipApplication.update({
+            where: { id: existing.id },
+            data: {
+              status: "pending",
+              portfolio: it.portfolio,
+              linkedin: it.linkedin,
+              github: it.github,
+              location: it.location,
+              phone: it.phone,
+              coverLetter: it.coverLetter,
+              reviewedAt: null,
+              reviewedBy: null,
+              offerSubject: null,
+              offerBody: null,
+              offerFileId: null,
+            },
+          })
+        : await (tx as any).internshipApplication.create({
+            data: {
+              internshipId,
+              batchId,
+              userId: user.id,
+              status: "pending",
+              portfolio: it.portfolio,
+              linkedin: it.linkedin,
+              github: it.github,
+              location: it.location,
+              phone: it.phone,
+              coverLetter: it.coverLetter,
+            },
+          });
+
+      createdApplications.push({ id: application.id, email: it.email, userId: user.id, wasRejected });
+      if (!existing || wasRejected) applicantsDelta += 1;
+    }
+
+    if (applicantsDelta > 0) {
+      await tx.internshipBatch.update({ where: { id: batchId }, data: { applicants: { increment: applicantsDelta } } as any });
+      await tx.internship.update({ where: { id: internshipId }, data: { applicants: { increment: applicantsDelta } } as any });
+    }
+
+    if (actor) {
+      await (tx as any).auditLog.create({
         data: {
           actorUserId: actor,
-          action: "INTERNSHIP_CERTIFICATE_RESTORE",
-          entityType: "InternshipCertificate",
-          entityId: cert.id,
-          before,
-          after: updated as any,
+          action: "INTERNSHIP_APPLICATION_BULK_IMPORT",
+          entityType: "InternshipBatch",
+          entityId: String(batchId),
+          before: { internshipId, batchId },
+          after: {
+            createdUsers: createdUsers.map((u) => ({ userId: u.userId, email: u.email })),
+            createdApplications: createdApplications.map((a) => ({ id: a.id, email: a.email, userId: a.userId })),
+            skipped,
+            applicantsDelta,
+          },
         },
-      })
-      .catch(() => {});
-  }
+      });
+    }
 
-  return res.json({ ok: true, certificate: updated });
+    return { createdUsers, createdApplications, skipped, applicantsDelta };
+  });
+
+  return res.json({ ok: true, ...result });
 });
+
+// ...
 
 router.post("/:id/apply", requireAuth, async (req: any, res) => {
   const internshipId = Number(req.params.id);
@@ -888,8 +1125,35 @@ router.post("/:id/apply", requireAuth, async (req: any, res) => {
     return res.json({ ok: true, application: existing });
   }
 
+  const wasRejected = !!existing && String((existing as any).status) === "rejected";
+
+  const resumeBase64 = req.body?.resumeBase64 ? String(req.body.resumeBase64) : null;
+  const resumeFileName = req.body?.resumeFileName ? String(req.body.resumeFileName) : null;
+  const resumeMimeType = req.body?.resumeMimeType ? String(req.body.resumeMimeType) : null;
+
+  let resumeFileId: string | null = null;
+  if (resumeBase64 && resumeFileName && resumeMimeType) {
+    try {
+      const bytes = Buffer.from(resumeBase64, "base64");
+      if (bytes.length > 0 && bytes.length <= 10 * 1024 * 1024) {
+        const f = await prisma.storedFile.create({
+          data: {
+            purpose: "RESUME" as any,
+            fileName: resumeFileName,
+            mimeType: resumeMimeType,
+            sizeBytes: bytes.length,
+            bytes,
+          } as any,
+        });
+        resumeFileId = f.id;
+      }
+    } catch {
+      resumeFileId = null;
+    }
+  }
+
   const application = existing
-    ? await prisma.internshipApplication.update({
+    ? await (prisma as any).internshipApplication.update({
         where: { id: existing.id },
         data: {
           status: "pending",
@@ -904,9 +1168,10 @@ router.post("/:id/apply", requireAuth, async (req: any, res) => {
           offerSubject: null,
           offerBody: null,
           offerFileId: null,
+          ...(resumeFileId ? { resumeFileId } : {}),
         },
       })
-    : await prisma.internshipApplication.create({
+    : await (prisma as any).internshipApplication.create({
         data: {
           internshipId,
           batchId,
@@ -918,12 +1183,40 @@ router.post("/:id/apply", requireAuth, async (req: any, res) => {
           location: req.body?.location ?? null,
           phone: req.body?.phone ?? null,
           coverLetter: req.body?.coverLetter ?? null,
+          ...(resumeFileId ? { resumeFileId } : {}),
         },
       });
 
-  prisma.internship.update({ where: { id: internshipId }, data: { applicants: { increment: 1 } } }).catch(() => {});
+  if (!existing || wasRejected) {
+    prisma.internshipBatch
+      .update({ where: { id: batchId }, data: { applicants: { increment: 1 } } as any })
+      .catch(() => {});
+    prisma.internship
+      .update({ where: { id: internshipId }, data: { applicants: { increment: 1 } } as any })
+      .catch(() => {});
+  }
 
   return res.json({ ok: true, application });
+});
+
+router.get("/:id/admin/applications/:appId/resume", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const appId = String(req.params.appId || "");
+  if (!Number.isFinite(internshipId) || !appId) return res.status(400).json({ error: "invalid_request" });
+
+  const application = await (prisma as any).internshipApplication.findUnique({
+    where: { id: appId },
+    select: { id: true, internshipId: true, resumeFileId: true },
+  });
+  if (!application || application.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+  if (!application.resumeFileId) return res.status(404).json({ error: "no_resume" });
+
+  const file = await prisma.storedFile.findUnique({ where: { id: application.resumeFileId } });
+  if (!file) return res.status(404).json({ error: "no_resume" });
+
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename=\"${file.fileName.replace(/\"/g, "") }\"`);
+  return res.send(Buffer.from(file.bytes as any));
 });
 
 router.get("/:id/admin/applications", requireAdmin, async (req: any, res) => {
@@ -982,13 +1275,27 @@ router.post("/:id/admin/applications/:appId/approve", requireAdmin, async (req: 
   const offerBody = req.body?.offerBody ? String(req.body.offerBody) : application.offerBody;
   const sendEmail = req.body?.sendEmail === undefined ? true : !!req.body.sendEmail;
 
+  const webOrigin = process.env.GROVIX_WEB_ORIGIN || "http://localhost:8080";
+  const offerQrPayload = `${webOrigin}/admin/internship-applications/${encodeURIComponent(appId)}`;
+  const offerPdf = await generatePdfBytes({
+    title: "Internship Offer Letter",
+    lines: [
+      `Application ID: ${appId}`,
+      `Internship: ${String(application.internship?.title || "")}`,
+      `Candidate: ${String(application.user?.name || "")}`,
+      `Batch: ${String(batch.name || "")}`,
+      `Issued At: ${new Date().toISOString()}`,
+    ],
+    qrPayload: offerQrPayload,
+  });
+
   const offerFile = await prisma.storedFile.create({
     data: {
       purpose: "OFFER_LETTER" as any,
       fileName: "offer-letter.pdf",
       mimeType: "application/pdf",
-      sizeBytes: pdfPlaceholderBytes().length,
-      bytes: pdfPlaceholderBytes(),
+      sizeBytes: offerPdf.length,
+      bytes: offerPdf,
     } as any,
   });
 
@@ -1017,6 +1324,7 @@ router.post("/:id/admin/applications/:appId/approve", requireAdmin, async (req: 
 
   seedAssignmentsForEnrollment(enrollment.id).catch(() => {});
 
+  const before = application as any;
   const updated = await prisma.internshipApplication.update({
     where: { id: application.id },
     data: {
@@ -1029,6 +1337,21 @@ router.post("/:id/admin/applications/:appId/approve", requireAdmin, async (req: 
       offerFileId: offerFile.id,
     } as any,
   });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_APPLICATION_APPROVE",
+          entityType: "InternshipApplication",
+          entityId: application.id,
+          before,
+          after: { application: updated, enrollment } as any,
+        },
+      })
+      .catch(() => {});
+  }
 
   if (sendEmail) {
     const cfg = getSmtpConfig();
@@ -1321,6 +1644,7 @@ router.post("/:id/v2/assignments/:assignmentId/attempts", requireAuth, async (re
     }
 
     evaluateAndPromoteBadge(String(assignment.enrollmentId), actor).catch(() => {});
+    enforceV2ProgressionForEnrollment(String(assignment.enrollmentId)).catch(() => {});
     maybeIssueV2CertificateByEnrollment(String(assignment.enrollmentId)).catch(() => {});
   }
 
@@ -1825,6 +2149,7 @@ router.post("/:id/admin/v2/attempts/:attemptId/grade", requireAdmin, async (req:
 
     const enrollmentId = String(attempt.assignment.enrollment.id);
     evaluateAndPromoteBadge(enrollmentId, actor).catch(() => {});
+    enforceV2ProgressionForEnrollment(enrollmentId).catch(() => {});
     maybeIssueV2CertificateByEnrollment(enrollmentId).catch(() => {});
   }
 
@@ -1877,6 +2202,10 @@ router.post("/:id/admin/applications/:appId/reject", requireAdmin, async (req: a
   const application = await prisma.internshipApplication.findUnique({ where: { id: appId } });
   if (!application || application.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
 
+  const prevStatus = String((application as any).status || "");
+  const batchId = (application as any).batchId ? Number((application as any).batchId) : null;
+
+  const before = application as any;
   const updated = await prisma.internshipApplication.update({
     where: { id: appId },
     data: {
@@ -1888,6 +2217,27 @@ router.post("/:id/admin/applications/:appId/reject", requireAdmin, async (req: a
       offerFileId: null,
     } as any,
   });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_APPLICATION_REJECT",
+          entityType: "InternshipApplication",
+          entityId: appId,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  if (batchId && Number.isFinite(batchId) && prevStatus !== "rejected") {
+    prisma.internshipBatch
+      .update({ where: { id: batchId }, data: { applicants: { decrement: 1 } } as any })
+      .catch(() => {});
+  }
 
   return res.json({ ok: true, application: updated });
 });
@@ -2101,6 +2451,141 @@ router.post("/:id/admin/enrollments/:enrollmentId/dates", requireAdmin, async (r
   return res.json({ ok: true, enrollment: updated });
 });
 
+router.post("/:id/admin/enrollments/:enrollmentId/certificate/revoke", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
+  if (!cert) return res.status(404).json({ error: "certificate_not_found" });
+
+  const before = cert as any;
+  const updated = await prisma.internshipCertificate.update({
+    where: { id: cert.id },
+    data: { status: "REVOKED" as any } as any,
+  });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_CERTIFICATE_REVOKE",
+          entityType: "InternshipCertificate",
+          entityId: cert.id,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return res.json({ ok: true, certificate: updated });
+});
+
+router.post("/:id/admin/enrollments/:enrollmentId/certificate/restore", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const cert = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
+  if (!cert) return res.status(404).json({ error: "certificate_not_found" });
+
+  const before = cert as any;
+  const updated = await prisma.internshipCertificate.update({
+    where: { id: cert.id },
+    data: { status: "VALID" as any } as any,
+  });
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_CERTIFICATE_RESTORE",
+          entityType: "InternshipCertificate",
+          entityId: cert.id,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return res.json({ ok: true, certificate: updated });
+});
+
+router.post("/:id/admin/enrollments/:enrollmentId/change-batch", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const batchIdRaw = req.body?.batchId;
+  const nextBatchId = batchIdRaw === null || batchIdRaw === undefined || batchIdRaw === "" ? null : Number(batchIdRaw);
+  if (nextBatchId !== null && !Number.isFinite(nextBatchId)) return res.status(400).json({ error: "invalid_batch_id" });
+
+  const enrollment = await prisma.internshipEnrollment.findUnique({ where: { id: enrollmentId } });
+  if (!enrollment || enrollment.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  if (nextBatchId !== null) {
+    const batch = await prisma.internshipBatch.findUnique({ where: { id: nextBatchId } });
+    if (!batch || batch.internshipId !== internshipId) return res.status(400).json({ error: "invalid_batch" });
+  }
+
+  const before = enrollment as any;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.internshipTaskAssignment.deleteMany({ where: { enrollmentId } });
+    await tx.internshipCertificate.deleteMany({ where: { enrollmentId } });
+
+    return tx.internshipEnrollment.update({
+      where: { id: enrollmentId },
+      data: {
+        batchId: nextBatchId,
+        progress: 0,
+        totalXP: 0,
+        earnedXP: 0,
+        currentBadge: "BEGINNER" as any,
+      } as any,
+    });
+  });
+
+  await seedAssignmentsForEnrollment(enrollmentId);
+  await recomputeAssignmentScheduleForEnrollment(enrollmentId);
+  await lockExpiredAssignments(enrollmentId);
+  await evaluateAndPromoteBadge(enrollmentId, actor);
+  await maybeIssueV2CertificateByEnrollment(enrollmentId);
+
+  if (actor) {
+    prisma.auditLog
+      .create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_ENROLLMENT_CHANGE_BATCH_RESET",
+          entityType: "InternshipEnrollment",
+          entityId: enrollmentId,
+          before,
+          after: updated as any,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return res.json({ ok: true, enrollment: updated });
+});
+
 router.get("/:id/me", requireAuth, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
@@ -2299,6 +2784,419 @@ router.post("/:id/tasks/:taskId/submit", requireAuth, async (req: any, res) => {
   maybeIssueLegacyCertificate(internshipId, userId).catch(() => {});
 
   return res.json({ ok: true, submissionId: submission.id });
+});
+
+// Admin internship management endpoints
+router.get("/", requireAdmin, async (req: any, res) => {
+  const internships = await prisma.internship.findMany({
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      type: true,
+      createdAt: true,
+      description: true,
+    },
+  });
+  const mapped = internships.map((i) => ({
+    ...i,
+    createdAt: i.createdAt ? i.createdAt.toISOString() : null,
+  }));
+  return res.json({ internships: mapped });
+});
+
+router.post("/", requireAdmin, async (req: any, res) => {
+  const { title, company, type, description } = req.body || {};
+  if (!title || !company || !description) {
+    return res.status(400).json({ error: "title_company_description_required" });
+  }
+  const internship = await prisma.internship.create({
+    data: {
+      title: String(title),
+      company: String(company),
+      type: (String(type || "free") as "free" | "paid"),
+      description: String(description),
+      xpRequired: 0,
+      duration: "Flexible",
+      location: "Remote",
+      skills: [],
+    },
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      type: true,
+      createdAt: true,
+      description: true,
+      internshipCode: true,
+    },
+  });
+  const code = await ensureInternshipCode(internship.id);
+  const mapped = {
+    ...internship,
+    internshipCode: code,
+    createdAt: internship.createdAt ? internship.createdAt.toISOString() : null,
+  };
+  return res.json({ internship: mapped });
+});
+
+router.delete("/:id", requireAdmin, async (req: any, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
+  await prisma.internship.delete({ where: { id } });
+  return res.json({ ok: true });
+});
+
+// Batches management
+router.get("/:id/batches", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+  const batches = await prisma.internshipBatch.findMany({
+    where: { internshipId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      _count: { select: { applications: true, enrollments: true } },
+    },
+  });
+  const mapped = batches.map(b => ({
+    ...b,
+    createdAt: b.createdAt.toISOString(),
+    startDate: b.startDate.toISOString(),
+    endDate: b.endDate.toISOString(),
+    applicationOpenAt: b.applicationOpenAt?.toISOString() || null,
+    applicationCloseAt: b.applicationCloseAt?.toISOString() || null,
+    applicants: b._count.applications,
+    interns: b._count.enrollments,
+  }));
+  return res.json({ batches: mapped });
+});
+
+router.post("/:id/batches", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+  const { name, startDate, endDate, applicationOpenAt, applicationCloseAt, capacity } = req.body || {};
+  if (!name || !startDate || !endDate) {
+    return res.status(400).json({ error: "name_startDate_endDate_required" });
+  }
+  const batch = await prisma.internshipBatch.create({
+    data: {
+      internshipId,
+      name: String(name),
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      applicationOpenAt: applicationOpenAt ? new Date(applicationOpenAt) : null,
+      applicationCloseAt: applicationCloseAt ? new Date(applicationCloseAt) : null,
+      capacity: capacity ? Number(capacity) : null,
+      status: "DRAFT",
+      batchCode: "TEMP",
+    },
+  });
+  const batchCode = await ensureBatchCode(batch.id);
+  const mapped = {
+    ...batch,
+    batchCode,
+    createdAt: batch.createdAt.toISOString(),
+    startDate: batch.startDate.toISOString(),
+    endDate: batch.endDate.toISOString(),
+    applicationOpenAt: batch.applicationOpenAt?.toISOString() || null,
+    applicationCloseAt: batch.applicationCloseAt?.toISOString() || null,
+  };
+  return res.json({ batch: mapped });
+});
+
+// Applications management
+router.get("/:id/applications", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+  const applications = await prisma.internshipApplication.findMany({
+    where: { internshipId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+      batch: { select: { id: true, name: true, batchCode: true } },
+    },
+  });
+  const mapped = applications.map(app => ({
+    ...app,
+    createdAt: app.createdAt.toISOString(),
+    reviewedAt: app.reviewedAt?.toISOString() || null,
+  }));
+  return res.json({ applications: mapped });
+});
+
+router.post("/applications/:applicationId/approve", requireAdmin, async (req: any, res) => {
+  const applicationId = String(req.params.applicationId);
+  const { batchId } = req.body || {};
+  if (!batchId) return res.status(400).json({ error: "batchId_required" });
+  const application = await prisma.internshipApplication.findUnique({
+    where: { id: applicationId },
+    include: { user: true, internship: true, batch: true },
+  });
+  if (!application) return res.status(404).json({ error: "application_not_found" });
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: Number(batchId) } });
+  if (!batch) return res.status(404).json({ error: "batch_not_found" });
+
+  const webOrigin = process.env.GROVIX_WEB_ORIGIN || "http://localhost:8080";
+  const offerQrPayload = `${webOrigin}/admin/internship-applications/${encodeURIComponent(applicationId)}`;
+  const pdfBytes = await generatePdfBytes({
+    title: "Internship Offer Letter",
+    lines: [
+      `Application ID: ${applicationId}`,
+      `Internship: ${String(application.internship?.title || "")}`,
+      `Candidate: ${String(application.user?.name || "")}`,
+      `Batch: ${String(batch.name || "")}`,
+      `Issued At: ${new Date().toISOString()}`,
+    ],
+    qrPayload: offerQrPayload,
+  });
+  const file = await prisma.storedFile.create({
+    data: {
+      purpose: "OFFER_LETTER" as any,
+      fileName: `offer-${applicationId}.pdf`,
+      mimeType: "application/pdf",
+      sizeBytes: pdfBytes.length,
+      bytes: pdfBytes,
+    } as any,
+  });
+
+  // Send email
+  const cfg = getSmtpConfig();
+  if (cfg) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: cfg.host,
+        port: cfg.port,
+        secure: cfg.secure,
+        auth: { user: cfg.user, pass: cfg.pass },
+      });
+      await transporter.sendMail({
+        from: cfg.from,
+        to: application.user.email,
+        subject: `Internship Offer: ${application.internship.title}`,
+        html: `<p>Hi ${application.user.name},</p><p>Congratulations! You have been approved for the internship: <strong>${application.internship.title}</strong>.</p><p>Batch: ${batch.name} (${batch.batchCode})</p><p>Your offer letter is attached.</p><p>Thanks,<br/>Grovix</p>`,
+        attachments: [{ filename: `offer-${applicationId}.pdf`, content: pdfBytes, contentType: "application/pdf" }],
+      });
+    } catch {
+      // Non-blocking
+    }
+  }
+
+  const updated = await prisma.internshipApplication.update({
+    where: { id: applicationId },
+    data: {
+      status: "approved",
+      reviewedAt: new Date(),
+      reviewedBy: req.auth.userId,
+      batchId: Number(batchId),
+      offerSubject: `Internship Offer: ${application.internship.title}`,
+      offerBody: `Congratulations! You have been approved for ${application.internship.title}. Batch: ${batch.name}.`,
+      offerFileId: file.id,
+    },
+  });
+
+  return res.json({ application: updated });
+});
+
+// Intern dashboard
+router.get("/enrollments/:enrollmentId/dashboard", requireAuth, async (req: any, res) => {
+  const enrollmentId = String(req.params.enrollmentId);
+  const userId = req.auth.userId as string;
+  const enrollment = await prisma.internshipEnrollment.findFirst({
+    where: { id: enrollmentId, userId },
+    include: {
+      internship: { select: { id: true, title: true, company: true, type: true } },
+      batch: { select: { id: true, name: true, batchCode: true, startDate: true, endDate: true } },
+      taskAssignments: {
+        include: {
+          template: { select: { title: true, description: true, xpReward: true, maxAttempts: true, rubricJson: true } },
+          attempts: { orderBy: { attemptNo: "desc" }, take: 1 },
+        },
+        orderBy: { unlockAt: "asc" },
+      },
+    },
+  });
+  if (!enrollment) return res.status(404).json({ error: "enrollment_not_found" });
+
+  const badgeRules = await prisma.internshipBadgeRule.findMany({
+    where: { internshipId: enrollment.internshipId },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  const totalTasks = enrollment.taskAssignments.length;
+  const passedTasks = enrollment.taskAssignments.filter(a => a.passedAt).length;
+  const completionPercent = totalTasks > 0 ? Math.round((passedTasks / totalTasks) * 100) : 0;
+  const totalXP = enrollment.taskAssignments.reduce((sum, a) => sum + (a.template?.xpReward || 0), 0);
+  const earnedXP = enrollment.taskAssignments.filter(a => a.passedAt).reduce((sum, a) => sum + (a.template?.xpReward || 0), 0);
+
+  let nextBadge = null;
+  for (const rule of badgeRules) {
+    if (completionPercent < rule.minCompletionPercent || earnedXP < rule.minXp) {
+      nextBadge = { level: rule.level, minCompletionPercent: rule.minCompletionPercent, minXp: rule.minXp };
+      break;
+    }
+  }
+
+  const tasks = enrollment.taskAssignments.map(a => {
+    const latestAttempt = a.attempts[0];
+    return {
+      id: a.id,
+      title: a.template?.title,
+      description: a.template?.description,
+      xpReward: a.template?.xpReward,
+      unlockAt: a.unlockAt?.toISOString() || null,
+      deadlineAt: a.deadlineAt?.toISOString() || null,
+      lockedAt: a.lockedAt?.toISOString() || null,
+      status: a.status,
+      maxAttempts: a.maxAttempts,
+      remainingAttempts: a.remainingAttempts,
+      passedAt: a.passedAt?.toISOString() || null,
+      latestAttempt: latestAttempt ? {
+        attemptNo: latestAttempt.attemptNo,
+        submittedAt: latestAttempt.submittedAt.toISOString(),
+        gradeStatus: latestAttempt.gradeStatus,
+        score: latestAttempt.score,
+        maxScore: latestAttempt.maxScore,
+        feedback: latestAttempt.feedback,
+      } : null,
+    };
+  });
+
+  const dashboard = {
+    enrollment: {
+      id: enrollment.id,
+      status: enrollment.status,
+      accessMode: enrollment.accessMode,
+      startDate: enrollment.startDate.toISOString(),
+      endDate: enrollment.endDate.toISOString(),
+    },
+    internship: enrollment.internship,
+    batch: enrollment.batch,
+    progress: {
+      completionPercent,
+      totalTasks,
+      passedTasks,
+      totalXP,
+      earnedXP,
+      currentBadge: enrollment.currentBadge,
+      nextBadge,
+    },
+    tasks,
+  };
+  return res.json({ dashboard });
+});
+
+// Public certificate verification (no auth)
+router.get("/certificates/:certificateCode/verify", async (req: any, res) => {
+  const certificateCode = String(req.params.certificateCode);
+  const cert = await prisma.internshipCertificate.findUnique({
+    where: { certificateCode },
+    include: {
+      internship: { select: { title: true, company: true, type: true } },
+      enrollment: {
+        select: {
+          startDate: true,
+          endDate: true,
+          user: { select: { name: true, email: true } },
+          batch: { select: { name: true, batchCode: true } },
+        },
+      },
+    },
+  });
+  if (!cert) return res.status(404).json({ error: "certificate_not_found" });
+  const verification = {
+    certificateCode: cert.certificateCode,
+    status: cert.status,
+    issuedAt: cert.issuedAt.toISOString(),
+    intern: {
+      name: cert.enrollment.user.name,
+      email: cert.enrollment.user.email,
+    },
+    internship: cert.internship,
+    batch: cert.enrollment.batch,
+    duration: {
+      from: cert.enrollment.startDate.toISOString(),
+      to: cert.enrollment.endDate.toISOString(),
+    },
+  };
+  return res.json({ verification });
+});
+
+// Auto-generate certificate on >=80% completion
+router.post("/enrollments/:enrollmentId/issue-certificate", requireAdmin, async (req: any, res) => {
+  const enrollmentId = String(req.params.enrollmentId);
+  const enrollment = await prisma.internshipEnrollment.findUnique({
+    where: { id: enrollmentId },
+    include: {
+      internship: true,
+      user: true,
+      taskAssignments: { include: { template: { select: { xpReward: true } } } },
+    },
+  });
+  if (!enrollment) return res.status(404).json({ error: "enrollment_not_found" });
+
+  const totalTasks = enrollment.taskAssignments.length;
+  const passedTasks = enrollment.taskAssignments.filter(a => a.passedAt).length;
+  const completionPercent = totalTasks > 0 ? Math.round((passedTasks / totalTasks) * 100) : 0;
+  if (completionPercent < 80) return res.status(400).json({ error: "completion_below_80" });
+
+  const existing = await prisma.internshipCertificate.findUnique({ where: { enrollmentId } });
+  if (existing) return res.json({ certificate: existing });
+
+  const certificateCode = await generateCertificateCode();
+  const webOrigin = process.env.GROVIX_WEB_ORIGIN || "http://localhost:8080";
+  const qrPayload = `${webOrigin}/verify/certificate?code=${encodeURIComponent(certificateCode)}`;
+  const pdfBytes = await generatePdfBytes({
+    title: "Internship Completion Certificate",
+    lines: [
+      `Certificate Code: ${certificateCode}`,
+      `Internship: ${String(enrollment.internship?.title || "")}`,
+      `Intern: ${String(enrollment.user?.name || "")}`,
+      `Issued At: ${new Date().toISOString()}`,
+    ],
+    qrPayload,
+  });
+  const file = await prisma.storedFile.create({
+    data: {
+      purpose: "CERTIFICATE" as any,
+      fileName: `certificate-${certificateCode}.pdf`,
+      mimeType: "application/pdf",
+      sizeBytes: pdfBytes.length,
+      bytes: pdfBytes,
+    } as any,
+  });
+  const certificate = await prisma.internshipCertificate.create({
+    data: {
+      internshipId: enrollment.internshipId,
+      enrollmentId,
+      certificateCode,
+      status: "VALID",
+      fileId: file.id,
+      qrPayload,
+    },
+  });
+
+  // Email certificate
+  const cfg = getSmtpConfig();
+  if (cfg) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: cfg.host,
+        port: cfg.port,
+        secure: cfg.secure,
+        auth: { user: cfg.user, pass: cfg.pass },
+      });
+      await transporter.sendMail({
+        from: cfg.from,
+        to: enrollment.user.email,
+        subject: `Internship Certificate (${certificateCode})`,
+        html: `<p>Congratulations! Your internship completion certificate is attached.</p><p>Certificate ID: <strong>${certificateCode}</strong></p>`,
+        attachments: [{ filename: `certificate-${certificateCode}.pdf`, content: pdfBytes, contentType: "application/pdf" }],
+      });
+    } catch {}
+  }
+
+  return res.json({ certificate });
 });
 
 export default router;

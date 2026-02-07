@@ -2,68 +2,64 @@ import { useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiFetch } from "@/lib/api";
+import { toast } from "sonner";
 
-type Notification = {
-  id?: string;
+type NotificationRow = {
+  id: string;
+  userId: string;
+  user: { id: string; name: string; email: string; avatarUrl: string | null } | null;
   type: string;
-  userId?: string;
-  userName?: string;
-  userAvatar?: string;
-  content?: string;
-  createdAt?: number;
-  read?: boolean;
+  title: string;
+  body: string;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
 };
 
 export default function AdminNotifications() {
   const [query, setQuery] = useState("");
-  const [keys, setKeys] = useState<string[]>([]);
+  const [rows, setRows] = useState<NotificationRow[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const next: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      if (k.startsWith("youthxp_notifications_")) {
-        next.push(k);
-      }
-    }
-    next.sort();
-    setKeys(next);
+    setLoading(true);
+    apiFetch<{ notifications: NotificationRow[] }>(`/community/admin/notifications?limit=200`)
+      .then((d) => setRows(Array.isArray(d?.notifications) ? d.notifications : []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
   }, []);
 
-  const filteredKeys = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return keys;
-    return keys.filter(k => k.toLowerCase().includes(q));
-  }, [keys, query]);
+    if (!q) return rows;
+    return rows.filter((n) => {
+      if (String(n.title || "").toLowerCase().includes(q)) return true;
+      if (String(n.body || "").toLowerCase().includes(q)) return true;
+      if (String(n.type || "").toLowerCase().includes(q)) return true;
+      if (String(n.user?.email || "").toLowerCase().includes(q)) return true;
+      if (String(n.user?.name || "").toLowerCase().includes(q)) return true;
+      if (String(n.userId || "").toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [rows, query]);
 
-  const getPreview = (key: string): string => {
+  const reload = async (q?: string) => {
+    const qs = new URLSearchParams();
+    if (q) qs.set("q", q);
+    qs.set("limit", "200");
+    const d = await apiFetch<{ notifications: NotificationRow[] }>(`/community/admin/notifications?${qs.toString()}`);
+    setRows(Array.isArray(d?.notifications) ? d.notifications : []);
+  };
+
+  const handleDelete = async (id: string) => {
     try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return "";
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? (parsed as Notification[]) : [];
-      const unread = list.filter(n => !n.read).length;
-      return `${list.length} notifications • ${unread} unread`;
+      await apiFetch(`/community/admin/notifications/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setRows((prev) => prev.filter((n) => n.id !== id));
+      toast.success("Notification deleted");
     } catch {
-      return "(invalid json)";
+      toast.error("Failed to delete notification");
     }
-  };
-
-  const handleDeleteKey = (key: string) => {
-    localStorage.removeItem(key);
-    setKeys(prev => prev.filter(k => k !== key));
-  };
-
-  const handleClearAll = () => {
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      if (k.startsWith("youthxp_notifications_")) toRemove.push(k);
-    }
-    toRemove.forEach(k => localStorage.removeItem(k));
-    setKeys(prev => prev.filter(k => !toRemove.includes(k)));
   };
 
   return (
@@ -71,44 +67,58 @@ export default function AdminNotifications() {
       <div className="glass-card p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-display font-bold">Notifications</h1>
-          <p className="text-muted-foreground mt-1">Manage user notifications (localStorage).</p>
+          <p className="text-muted-foreground mt-1">Manage user notifications (database).</p>
         </div>
         <div className="flex gap-2">
           <div className="w-72 max-w-full">
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search storage keys..." />
+            <Input
+              value={query}
+              onChange={(e) => {
+                const v = e.target.value;
+                setQuery(v);
+                void reload(v.trim());
+              }}
+              placeholder="Search type/title/user/email..."
+            />
           </div>
-          <Button variant="destructive" onClick={handleClearAll}>Clear All</Button>
+          {loading && <div className="text-xs text-muted-foreground self-center">Loading…</div>}
         </div>
       </div>
 
       <div className="glass-card overflow-hidden">
         <div className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-border text-xs text-muted-foreground">
-          <div className="col-span-7">Storage Key</div>
-          <div className="col-span-4">Preview</div>
+          <div className="col-span-3">User</div>
+          <div className="col-span-2">Type</div>
+          <div className="col-span-5">Title / Body</div>
+          <div className="col-span-1">Read</div>
           <div className="col-span-1 text-right">Action</div>
         </div>
 
         <div className="divide-y divide-border">
-          {filteredKeys.map((k) => (
-            <div key={k} className="grid grid-cols-12 gap-2 px-4 py-3 items-center">
-              <div className="col-span-7 font-mono text-xs truncate">{k}</div>
-              <div className="col-span-4 text-xs text-muted-foreground truncate">{getPreview(k)}</div>
+          {filtered.map((n) => (
+            <div key={n.id} className="grid grid-cols-12 gap-2 px-4 py-3 items-center">
+              <div className="col-span-3 min-w-0">
+                <div className="text-sm font-medium truncate">{n.user?.name || "Unknown"}</div>
+                <div className="text-xs text-muted-foreground truncate">{n.user?.email || n.userId}</div>
+              </div>
+              <div className="col-span-2 text-xs text-muted-foreground truncate">{n.type}</div>
+              <div className="col-span-5 min-w-0">
+                <div className="text-sm font-medium truncate">{n.title}</div>
+                <div className="text-xs text-muted-foreground truncate">{n.body}</div>
+              </div>
+              <div className="col-span-1 text-xs text-muted-foreground">{n.readAt ? "Yes" : "No"}</div>
               <div className="col-span-1 flex justify-end">
-                <Button variant="ghost" size="sm" onClick={() => handleDeleteKey(k)}>
+                <Button variant="ghost" size="sm" onClick={() => void handleDelete(n.id)}>
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
             </div>
           ))}
 
-          {filteredKeys.length === 0 && (
-            <div className="p-8 text-center text-muted-foreground">No notification data found.</div>
+          {filtered.length === 0 && (
+            <div className="p-8 text-center text-muted-foreground">No notifications found.</div>
           )}
         </div>
-      </div>
-
-      <div className="text-xs text-muted-foreground">
-        Only keys starting with <span className="font-mono">youthxp_notifications_</span> are shown.
       </div>
     </div>
   );

@@ -117,6 +117,14 @@ export default function InternshipApplication() {
     }
   };
 
+  const fileToBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -124,6 +132,24 @@ export default function InternshipApplication() {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     try {
+      let resumeBase64: string | null = null;
+      let resumeFileName: string | null = null;
+      let resumeMimeType: string | null = null;
+
+      if (formData.resume) {
+        try {
+          const dataUrl = await fileToBase64(formData.resume);
+          const idx = dataUrl.indexOf(",");
+          resumeBase64 = idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+          resumeFileName = formData.resume.name;
+          resumeMimeType = formData.resume.type || "application/octet-stream";
+        } catch {
+          resumeBase64 = null;
+          resumeFileName = null;
+          resumeMimeType = null;
+        }
+      }
+
       await apiFetch(`/internships/${internshipDetails.id}/apply`, {
         method: "POST",
         body: JSON.stringify({
@@ -134,6 +160,9 @@ export default function InternshipApplication() {
           location: formData.location,
           phone: formData.phone,
           coverLetter: formData.coverLetter,
+          resumeBase64,
+          resumeFileName,
+          resumeMimeType,
         }),
       });
     } catch {

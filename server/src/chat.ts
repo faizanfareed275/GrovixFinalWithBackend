@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "./db";
-import { requireAuth } from "./middleware/auth";
+import { requireAdmin, requireAuth } from "./middleware/auth";
 
 const router = Router();
 const db = prisma as any;
@@ -21,6 +21,122 @@ async function getUserMap(userIds: string[]) {
   const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, avatarUrl: true } });
   return new Map(users.map((u) => [u.id, u]));
 }
+
+router.get("/admin/conversations", requireAdmin, async (req: any, res) => {
+  const q = String(req.query?.q || "").trim().toLowerCase();
+  const takeRaw = Number(req.query?.limit || 200);
+  const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 500) : 200;
+
+  const convos = await db.chatConversation.findMany({
+    orderBy: { updatedAt: "desc" },
+    take,
+    select: {
+      id: true,
+      type: true,
+      name: true,
+      updatedAt: true,
+      createdAt: true,
+      createdBy: true,
+      participants: { select: { userId: true, role: true, joinedAt: true } },
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, senderId: true, type: true, createdAt: true },
+      },
+    },
+  });
+
+  const userIds: string[] = [];
+  for (const c of convos as any[]) {
+    userIds.push(String(c.createdBy || ""));
+    for (const p of c.participants || []) userIds.push(String(p.userId || ""));
+    const last = c.messages?.[0];
+    if (last?.senderId) userIds.push(String(last.senderId));
+  }
+  const userMap = await getUserMap(userIds);
+
+  const mapped = (convos as any[]).map((c: any) => {
+    const last = c.messages?.[0] || null;
+    const lastSender = last?.senderId ? userMap.get(String(last.senderId)) : null;
+    return {
+      id: String(c.id),
+      type: String(c.type),
+      name: c.type === "GROUP" ? (c.name || "Group") : null,
+      updatedAt: c.updatedAt.toISOString(),
+      createdAt: c.createdAt.toISOString(),
+      createdBy: String(c.createdBy),
+      participants: (c.participants || []).map((p: any) => {
+        const u = userMap.get(String(p.userId));
+        return {
+          userId: String(p.userId),
+          name: u?.name || "Unknown",
+          avatarUrl: u?.avatarUrl || null,
+          role: String(p.role || "MEMBER"),
+          joinedAt: p.joinedAt ? new Date(p.joinedAt).toISOString() : null,
+        };
+      }),
+      lastMessage: last
+        ? {
+            id: String(last.id),
+            type: String(last.type),
+            createdAt: last.createdAt.toISOString(),
+            sender: lastSender ? { id: lastSender.id, name: lastSender.name, avatarUrl: lastSender.avatarUrl || null } : { id: String(last.senderId), name: "Unknown", avatarUrl: null },
+            preview: toB64Preview(String(last.type || "TEXT")),
+          }
+        : null,
+    };
+  });
+
+  const filtered = q
+    ? mapped.filter((c: any) => {
+        if ((c.name || "").toLowerCase().includes(q)) return true;
+        if (String(c.id).toLowerCase().includes(q)) return true;
+        if ((c.participants || []).some((p: any) => String(p.name || "").toLowerCase().includes(q))) return true;
+        return false;
+      })
+    : mapped;
+
+  return res.json({ conversations: filtered });
+});
+
+router.get("/admin/conversations/:id/messages", requireAdmin, async (req: any, res) => {
+  const conversationId = String(req.params.id || "");
+  if (!conversationId) return res.status(400).json({ error: "invalid_id" });
+
+  const takeRaw = Number(req.query?.limit || 100);
+  const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 200) : 100;
+  const before = String(req.query?.before || "").trim();
+
+  const messages = await db.chatMessage.findMany({
+    where: {
+      conversationId,
+      createdAt: before ? { lt: new Date(before) } : undefined,
+    },
+    orderBy: { createdAt: "desc" },
+    take,
+    select: { id: true, senderId: true, type: true, ivB64: true, ciphertextB64: true, createdAt: true },
+  });
+
+  const senderIds = (messages as any[]).map((m: any) => String(m.senderId));
+  const senderMap = await getUserMap(senderIds);
+
+  const out = (messages as any[])
+    .map((m: any) => {
+      const s = senderMap.get(String(m.senderId));
+      return {
+        id: String(m.id),
+        senderId: String(m.senderId),
+        sender: s ? { id: s.id, name: s.name, avatarUrl: s.avatarUrl || null } : { id: String(m.senderId), name: "Unknown", avatarUrl: null },
+        type: String(m.type),
+        ivB64: String(m.ivB64),
+        ciphertextB64: String(m.ciphertextB64),
+        createdAt: m.createdAt.toISOString(),
+      };
+    })
+    .reverse();
+
+  return res.json({ messages: out, nextBefore: messages.length ? messages[messages.length - 1].createdAt.toISOString() : null });
+});
 
 router.get("/conversations/:id/stats", requireAuth, async (req: any, res) => {
   const userId = req.auth.userId as string;

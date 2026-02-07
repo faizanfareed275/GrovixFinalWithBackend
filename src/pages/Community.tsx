@@ -8,7 +8,7 @@ import {
   Copy, Link2, Twitter, Facebook, Linkedin, Search, BookmarkCheck,
   Sparkles, BarChart3, Loader2, MapPin
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
@@ -70,174 +70,6 @@ interface Post {
 function countNestedComments(items: Comment[] = []): number {
   return items.reduce((sum, c) => sum + 1 + countNestedComments(Array.isArray(c.replies) ? c.replies : []), 0);
 }
-
-const initialFeedPosts: Post[] = [
-  {
-    id: 1,
-    userId: "system-1",
-    user: "Alex Chen",
-    avatar: "AC",
-    title: "Software Engineer Intern",
-    company: "TechCorp",
-    timeAgo: "2h",
-    content: "Just completed my first AI Image Classifier challenge on Grovix! 🎉 After weeks of learning #NeuralNetworks, I finally built something that works. The community feedback was incredibly helpful. Thank you to everyone who reviewed my code! #AI #MachineLearning @Grovix",
-    images: [],
-    xp: 500,
-    likes: 156,
-    comments: [
-      {
-        id: 1,
-        userId: "user-1",
-        user: "Mike Wilson",
-        avatar: "MW",
-        content: "Great work Alex! The neural network implementation looks solid.",
-        timeAgo: "1h",
-        likes: 12,
-        liked: false,
-        replies: [
-          {
-            id: 1,
-            userId: "system-1",
-            user: "Alex Chen",
-            avatar: "AC",
-            content: "Thanks Mike! Appreciate the feedback.",
-            timeAgo: "45m",
-            likes: 3,
-            liked: false,
-          }
-        ]
-      }
-    ],
-    shares: 12,
-    liked: false,
-    saved: false,
-    reactions: { like: 80, love: 45, laugh: 5, fire: 20, clap: 6 },
-    userReaction: null,
-    poll: null,
-  },
-  {
-    id: 2,
-    userId: "system-2",
-    user: "Sarah Kim",
-    avatar: "SK",
-    title: "Full Stack Developer",
-    company: "StartupXYZ",
-    timeAgo: "5h",
-    content: "Excited to share my E-commerce Dashboard project! Built with #React, #TypeScript, and #TailwindCSS. This was part of the Web Dev challenge track. Would love to get your feedback! #WebDev #Frontend",
-    images: ["https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&auto=format&fit=crop&q=60"],
-    xp: 450,
-    likes: 234,
-    comments: [],
-    shares: 28,
-    liked: true,
-    saved: true,
-    reactions: { like: 100, love: 80, laugh: 2, fire: 40, clap: 12 },
-    userReaction: "love",
-    poll: {
-      question: "Which framework should I use for my next project?",
-      options: [
-        { id: 1, text: "Next.js", votes: 45 },
-        { id: 2, text: "Remix", votes: 23 },
-        { id: 3, text: "Astro", votes: 18 },
-      ],
-      totalVotes: 86,
-      userVote: null,
-    },
-  },
-  {
-    id: 3,
-    userId: "system-3",
-    user: "Marcus Johnson",
-    avatar: "MJ",
-    title: "Blockchain Developer",
-    company: "Web3Labs",
-    timeAgo: "1d",
-    content: "🚀 Big milestone! Just hit Level 15 on Grovix and unlocked my first paid internship opportunity. The journey from learning #Solidity to building a full #DeFi protocol was incredible. Here's what I learned along the way...\n\n1. Start with the basics\n2. Build projects, not just tutorials\n3. Engage with the community\n4. Never stop learning\n\n#Blockchain #Web3 #Crypto @Grovix",
-    images: [],
-    xp: 800,
-    likes: 512,
-    comments: [],
-    shares: 56,
-    liked: false,
-    saved: false,
-    reactions: { like: 200, love: 150, laugh: 10, fire: 100, clap: 52 },
-    userReaction: null,
-    poll: null,
-  },
-  {
-    id: 4,
-    userId: "system-4",
-    user: "Emily Zhang",
-    avatar: "EZ",
-    title: "AI/ML Enthusiast",
-    company: "University Student",
-    timeAgo: "2d",
-    content: "Just published my first tutorial on building chatbots with #LLMs! Check it out in the Guidelines section. Thanks to the Grovix mentors who helped me refine the content. 📚 #AI #ChatGPT #Tutorial @TechNinja",
-    images: ["https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800&auto=format&fit=crop&q=60"],
-    xp: 350,
-    likes: 189,
-    comments: [],
-    shares: 21,
-    liked: true,
-    saved: false,
-    reactions: { like: 89, love: 60, laugh: 5, fire: 25, clap: 10 },
-    userReaction: "like",
-    poll: null,
-  },
-];
-
-const initialDiscussions: Discussion[] = [
-  {
-    id: 1,
-    userId: "system-1",
-    category: "AI & ML",
-    title: "Best practices for training large language models",
-    content: "I've been working on fine-tuning LLMs for specific tasks and wanted to share some insights. What techniques have worked best for you?\n\n1. Start with a smaller model and scale up\n2. Use quality data over quantity\n3. Implement proper evaluation metrics early\n\nWould love to hear your experiences!",
-    author: "TechNinja",
-    avatar: "TN",
-    replies: [
-      {
-        id: 1,
-        userId: "user-1",
-        user: "DataScientist",
-        avatar: "DS",
-        content: "Great points! I'd add that using LoRA for fine-tuning can significantly reduce compute costs.",
-        timeAgo: "2h ago",
-        likes: 12,
-        liked: false,
-      },
-    ],
-    views: 1234,
-    hot: true,
-    createdAt: "2 days ago",
-  },
-  {
-    id: 2,
-    userId: "system-2",
-    category: "Web Dev",
-    title: "React vs Vue in 2024 - which one to learn?",
-    content: "I'm starting my web development journey and trying to decide between React and Vue. What would you recommend for a beginner in 2024?\n\nI've heard React has more job opportunities but Vue is easier to learn. What's your take?",
-    author: "CodeMaster",
-    avatar: "CM",
-    replies: [],
-    views: 2567,
-    hot: true,
-    createdAt: "3 days ago",
-  },
-  {
-    id: 3,
-    userId: "system-3",
-    category: "Internships",
-    title: "How I landed my first tech internship at 19",
-    content: "Just got my first tech internship offer and wanted to share my journey! Here's what helped me:\n\n1. Built 5 projects showcasing different skills\n2. Contributed to open source\n3. Networked on LinkedIn and tech communities\n4. Practiced coding interviews for 2 months\n\nAsk me anything!",
-    author: "YoungDev",
-    avatar: "YD",
-    replies: [],
-    views: 5678,
-    hot: false,
-    createdAt: "1 week ago",
-  },
-];
 
 interface Event {
   id: number;
@@ -311,11 +143,13 @@ function PostCard({
   post,
   currentUserId,
   isFollowedPost,
+  initialShowComments,
   onEdit,
   onDelete,
   onSave,
   onReportPost,
   onReportComment,
+  onReportUser,
   onRepost,
   onShare,
   onReact,
@@ -330,11 +164,13 @@ function PostCard({
   post: Post;
   currentUserId: string | null;
   isFollowedPost?: boolean;
+  initialShowComments?: boolean;
   onEdit: (postId: number) => void;
   onDelete: (postId: number) => void;
   onSave: (postId: number) => void;
   onReportPost: (postId: number) => void;
   onReportComment: (postId: number, commentId: number) => void;
+  onReportUser: (userId: string, label: string) => void;
   onRepost: (post: Post) => void;
   onShare: (postId: number) => void;
   onReact: (postId: number, reaction: ReactionType) => void;
@@ -351,6 +187,10 @@ function PostCard({
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
+  useEffect(() => {
+    if (initialShowComments) setShowComments(true);
+  }, [initialShowComments]);
+
   const handleSave = () => {
     onSave(post.id);
   };
@@ -360,7 +200,7 @@ function PostCard({
   };
 
   const handleCopyLink = async () => {
-    const url = `${window.location.origin}/community/post/${post.id}`;
+    const url = `${window.location.origin}/community?postId=${post.id}`;
     try {
       await navigator.clipboard.writeText(url);
       toast.success("Link copied to clipboard!");
@@ -372,7 +212,7 @@ function PostCard({
   };
 
   const handleNativeShare = async () => {
-    const url = `${window.location.origin}/community/post/${post.id}`;
+    const url = `${window.location.origin}/community?postId=${post.id}`;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -391,7 +231,7 @@ function PostCard({
   };
 
   const handleSocialShare = (platform: string) => {
-    const url = `${window.location.origin}/community/post/${post.id}`;
+    const url = `${window.location.origin}/community?postId=${post.id}`;
     const text = encodeURIComponent(post.content.slice(0, 100));
     let shareUrl = "";
     
@@ -420,11 +260,7 @@ function PostCard({
   const isOwner = currentUserId === post.userId;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`glass-card overflow-hidden ${isFollowedPost ? 'ring-1 ring-primary/20' : ''}`}
-    >
+    <Card id={`post-${post.id}`} className={`glass-card overflow-hidden ${isFollowedPost ? 'ring-1 ring-primary/20' : ''}`}>
       {/* Post Header */}
       <div className="p-4 flex items-start gap-3">
         <UserAvatar
@@ -463,6 +299,7 @@ function PostCard({
             onEdit={() => onEdit(post.id)}
             onDelete={() => onDelete(post.id)}
             onReport={() => onReportPost(post.id)}
+            onReportUser={() => onReportUser(post.userId, `User ${post.user}`)}
           />
         </div>
       </div>
@@ -675,13 +512,14 @@ function PostCard({
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </Card>
   );
 }
 
 export default function Community() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { following, isFollowing } = useFollow(user?.id || "guest");
   const { recordActivity } = useStreak();
   const [activeTab, setActiveTab] = useState("feed");
@@ -704,6 +542,33 @@ export default function Community() {
 
   const [reportTarget, setReportTarget] = useState<ReportDialogTarget | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+
+  const deepLink = useMemo(() => {
+    const sp = new URLSearchParams(location.search || "");
+    const postIdRaw = sp.get("postId");
+    const commentIdRaw = sp.get("commentId");
+    const discussionIdRaw = sp.get("discussionId");
+    const replyIdRaw = sp.get("replyId");
+
+    const postId = postIdRaw ? Number(postIdRaw) : null;
+    const commentId = commentIdRaw ? Number(commentIdRaw) : null;
+    const discussionId = discussionIdRaw ? Number(discussionIdRaw) : null;
+    const replyId = replyIdRaw ? Number(replyIdRaw) : null;
+
+    return {
+      postId: Number.isFinite(postId as any) ? postId : null,
+      commentId: Number.isFinite(commentId as any) ? commentId : null,
+      discussionId: Number.isFinite(discussionId as any) ? discussionId : null,
+      replyId: Number.isFinite(replyId as any) ? replyId : null,
+    };
+  }, [location.search]);
+
+  const scrollToId = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }, []);
 
   const defaultApiUrl =
     typeof window !== "undefined"
@@ -746,29 +611,19 @@ export default function Community() {
     });
   };
 
+  const handleReportUser = (userId: string, label: string) => {
+    openReport({
+      targetType: "USER",
+      targetUserId: userId,
+      label,
+    });
+  };
+
   const toastApiError = (e: any, fallback: string) => {
     const status = e?.status;
     if (status === 401) return toast.error("Please sign in to continue");
     if (status === 403) return toast.error("You don't have permission to do that");
     return toast.error(fallback);
-  };
-
-  const persistDiscussions = (next: Discussion[]) => {
-    if (!ensureSignedIn()) return;
-
-    let prevSnapshot: Discussion[] = [];
-    setDiscussions((prev) => {
-      prevSnapshot = prev;
-      return next;
-    });
-
-    apiFetch("/community/discussions", {
-      method: "PUT",
-      body: JSON.stringify({ discussions: next }),
-    }).catch((e) => {
-      setDiscussions(prevSnapshot);
-      toastApiError(e, "Failed to save discussions");
-    });
   };
 
   const fetchDiscussions = useCallback(async () => {
@@ -795,29 +650,45 @@ export default function Community() {
     }
   }, []);
 
-  const persistPosts = (next: Post[]) => {
-    if (!ensureSignedIn()) return;
-
-    let prevSnapshot: Post[] = [];
-    setPosts((prev) => {
-      prevSnapshot = prev;
-      return next;
-    });
-
-    apiFetch("/community/posts", {
-      method: "PUT",
-      body: JSON.stringify({ posts: next }),
-    }).catch((e) => {
-      setPosts(prevSnapshot);
-      toastApiError(e, "Failed to save posts");
-    });
-  };
 
   useEffect(() => {
     fetchDiscussions().catch(() => {});
     fetchPosts().catch(() => {});
     fetchEvents().catch(() => {});
   }, [fetchDiscussions, fetchPosts, fetchEvents]);
+
+  useEffect(() => {
+    // Post deep-link (optionally comment)
+    if (deepLink.postId) {
+      setActiveTab("feed");
+
+      const postAnchorId = `post-${deepLink.postId}`;
+      const commentAnchorId = deepLink.commentId ? `comment-${deepLink.postId}-${deepLink.commentId}` : null;
+
+      const t = window.setTimeout(() => {
+        if (commentAnchorId) {
+          if (!scrollToId(commentAnchorId)) scrollToId(postAnchorId);
+        } else {
+          scrollToId(postAnchorId);
+        }
+      }, 200);
+      return () => window.clearTimeout(t);
+    }
+
+    // Discussion deep-link (optionally reply)
+    if (deepLink.discussionId) {
+      setActiveTab("discussions");
+      const found = discussions.find((d) => d.id === deepLink.discussionId);
+      if (found) {
+        setSelectedDiscussion(found);
+        const replyAnchorId = deepLink.replyId ? `discussion-reply-${deepLink.discussionId}-${deepLink.replyId}` : null;
+        const t = window.setTimeout(() => {
+          if (replyAnchorId) scrollToId(replyAnchorId);
+        }, 250);
+        return () => window.clearTimeout(t);
+      }
+    }
+  }, [deepLink.postId, deepLink.commentId, deepLink.discussionId, deepLink.replyId, discussions, scrollToId]);
 
   useEffect(() => {
     const onProfileUpdated = () => {
@@ -1172,97 +1043,72 @@ export default function Community() {
   const handleCreateDiscussion = (discussion: { category: string; title: string; content: string }) => {
     if (!ensureSignedIn()) return;
 
-    const newDiscussion: Discussion = {
-      id: Date.now(),
-      userId: user?.id || "guest",
-      category: discussion.category,
-      title: discussion.title,
-      content: discussion.content,
-      author: user?.name || "Guest User",
-      avatar: user?.avatar || "GU",
-      avatarUrl: user?.avatarUrl || null,
-      replies: [],
-      views: 0,
-      hot: false,
-      createdAt: "Just now",
-    };
-
-    persistDiscussions([newDiscussion, ...discussions]);
-    toast.success("Discussion created successfully!");
+    apiFetch<{ discussion: Discussion }>("/community/discussions", {
+      method: "POST",
+      body: JSON.stringify({
+        category: discussion.category,
+        title: discussion.title,
+        content: discussion.content,
+      }),
+    })
+      .then((d) => {
+        if (!d?.discussion) return;
+        setDiscussions((prev) => [d.discussion, ...prev]);
+        toast.success("Discussion created successfully!");
+      })
+      .catch((e) => {
+        toastApiError(e, "Failed to create discussion");
+      });
   };
 
   const handleAddDiscussionReply = (discussionId: number, content: string, parentReplyId?: number) => {
     if (!ensureSignedIn()) return;
 
-    const reply: DiscussionReply = {
-      id: Date.now(),
-      userId: user?.id || "guest",
-      user: user?.name || "Guest User",
-      avatar: user?.avatar || "GU",
-      avatarUrl: user?.avatarUrl || null,
-      content,
-      timeAgo: "Just now",
-      likes: 0,
-      liked: false,
-      replies: [],
-    };
-
-    const nextDiscussions = discussions.map((d) => {
-      if (d.id !== discussionId) return d;
-      const nextReplies = parentReplyId
-        ? addReplyToTree(d.replies, parentReplyId, reply)
-        : [...d.replies, reply];
-      return { ...d, replies: nextReplies };
-    });
-    persistDiscussions(nextDiscussions);
-
-    if (selectedDiscussion?.id === discussionId) {
-      setSelectedDiscussion((prev) => {
-        if (!prev) return null;
-        const nextReplies = parentReplyId
-          ? addReplyToTree(prev.replies, parentReplyId, reply)
-          : [...prev.replies, reply];
-        return { ...prev, replies: nextReplies };
+    apiFetch<{ discussion: Discussion }>(`/community/discussions/${discussionId}/replies`, {
+      method: "POST",
+      body: JSON.stringify({ content, parentReplyId: parentReplyId ?? null }),
+    })
+      .then((d) => {
+        if (!d?.discussion) return;
+        setDiscussions((prev) => prev.map((x) => (x.id === discussionId ? d.discussion : x)));
+        setSelectedDiscussion((prev) => (prev?.id === discussionId ? d.discussion : prev));
+      })
+      .catch((e) => {
+        toastApiError(e, "Failed to add reply");
       });
-    }
   };
 
   const handleLikeDiscussionReply = (discussionId: number, replyId: number) => {
     if (!ensureSignedIn()) return;
 
-    const nextDiscussions = discussions.map((d) => {
-      if (d.id !== discussionId) return d;
-      return { ...d, replies: toggleReplyLike(d.replies, replyId) };
-    });
-    persistDiscussions(nextDiscussions);
-
-    if (selectedDiscussion?.id === discussionId) {
-      setSelectedDiscussion((prev) => {
-        if (!prev) return null;
-        return { ...prev, replies: toggleReplyLike(prev.replies, replyId) };
+    apiFetch<{ discussion: Discussion }>(`/community/discussions/${discussionId}/replies/${replyId}/like`, {
+      method: "POST",
+    })
+      .then((d) => {
+        if (!d?.discussion) return;
+        setDiscussions((prev) => prev.map((x) => (x.id === discussionId ? d.discussion : x)));
+        setSelectedDiscussion((prev) => (prev?.id === discussionId ? d.discussion : prev));
+      })
+      .catch((e) => {
+        toastApiError(e, "Failed to like reply");
       });
-    }
   };
 
   const handleDeleteDiscussionReply = (discussionId: number, replyId: number) => {
     if (!ensureSignedIn()) return;
 
-    const nextDiscussions = discussions.map(d => {
-      if (d.id === discussionId) {
-        return { ...d, replies: deleteReplyFromTree(d.replies, replyId) };
-      }
-      return d;
-    });
-    persistDiscussions(nextDiscussions);
-
-    if (selectedDiscussion?.id === discussionId) {
-      setSelectedDiscussion(prev => {
-        if (!prev) return null;
-        return { ...prev, replies: deleteReplyFromTree(prev.replies, replyId) };
+    apiFetch<{ discussion: Discussion }>(`/community/discussions/${discussionId}/replies/${replyId}`, {
+      method: "DELETE",
+    })
+      .then((d) => {
+        if (!d?.discussion) return;
+        setDiscussions((prev) => prev.map((x) => (x.id === discussionId ? d.discussion : x)));
+        setSelectedDiscussion((prev) => (prev?.id === discussionId ? d.discussion : prev));
+        toast.success("Reply deleted");
+      })
+      .catch((e) => {
+        toastApiError(e, "Failed to delete reply");
       });
-    }
-
-    toast.success("Reply deleted");
   };
 
   const handleDeleteDiscussion = (discussionId: number) => {
@@ -1438,11 +1284,13 @@ export default function Community() {
                             post={post}
                             currentUserId={user?.id || null}
                             isFollowedPost={isFollowing(post.userId)}
+                            initialShowComments={deepLink.postId === post.id && !!deepLink.commentId}
                             onEdit={handleEditPost}
                             onDelete={handleDeletePost}
                             onSave={handleSavePost}
                             onReportPost={handleReportPost}
                             onReportComment={handleReportPostComment}
+                            onReportUser={handleReportUser}
                             onRepost={handleRepost}
                             onShare={handleShare}
                             onReact={handleReact}
@@ -1491,6 +1339,7 @@ export default function Community() {
                             onSave={handleSavePost}
                             onReportPost={handleReportPost}
                             onReportComment={handleReportPostComment}
+                            onReportUser={handleReportUser}
                             onRepost={handleRepost}
                             onShare={handleShare}
                             onReact={handleReact}

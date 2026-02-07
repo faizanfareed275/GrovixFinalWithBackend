@@ -9,25 +9,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { readJson, writeJson } from "@/admin/lib/storage";
+import { apiFetch } from "@/lib/api";
+import { toast } from "sonner";
 
-type StoredUser = {
+type DbUserRow = {
   id: string;
   email: string;
-  password?: string;
   name: string;
-  role?: string;
-  isAdmin?: boolean;
+  role: string;
+  xp: number;
+  isBanned: boolean;
+  bannedUntil: string | null;
+  createdAt: string;
 };
 
 export default function AdminUsers() {
-  const [users, setUsers] = useState<StoredUser[]>([]);
+  const [users, setUsers] = useState<DbUserRow[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "user" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "USER" });
 
   useEffect(() => {
-    setUsers(readJson<StoredUser[]>("youthxp_users", []));
+    apiFetch<{ users: DbUserRow[] }>("/users/admin/list")
+      .then((d) => setUsers(Array.isArray(d?.users) ? d.users : []))
+      .catch(() => setUsers([]));
   }, []);
 
   const filtered = useMemo(() => {
@@ -36,33 +41,43 @@ export default function AdminUsers() {
     return users.filter(u => (u.name || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q));
   }, [users, query]);
 
-  const persist = (next: StoredUser[]) => {
-    setUsers(next);
-    writeJson("youthxp_users", next);
+  const reload = async (q?: string) => {
+    const qs = new URLSearchParams();
+    if (q) qs.set("q", q);
+    const d = await apiFetch<{ users: DbUserRow[] }>(`/users/admin/list?${qs.toString()}`);
+    setUsers(Array.isArray(d?.users) ? d.users : []);
   };
 
-  const handleDelete = (id: string) => {
-    persist(users.filter(u => u.id !== id));
+  const handleDelete = async (id: string) => {
+    try {
+      await apiFetch(`/users/admin/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      toast.success("User deleted");
+    } catch {
+      toast.error("Failed to delete user");
+    }
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const email = form.email.trim().toLowerCase();
     if (!form.name.trim() || !email || !form.password.trim()) return;
 
-    if (users.some(u => (u.email || "").trim().toLowerCase() === email)) return;
-
-    const newUser: StoredUser = {
-      id: (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `user_${Date.now()}`),
-      name: form.name.trim(),
-      email,
-      password: form.password,
-      role: form.role,
-      isAdmin: form.role === "admin",
-    };
-
-    persist([newUser, ...users]);
-    setOpen(false);
-    setForm({ name: "", email: "", password: "", role: "user" });
+    try {
+      const d = await apiFetch<{ user: DbUserRow }>("/users/admin/create", {
+        method: "POST",
+        body: JSON.stringify({ name: form.name.trim(), email, password: form.password, role: form.role }),
+      });
+      if (d?.user) {
+        setUsers((prev) => [d.user, ...prev]);
+        setOpen(false);
+        setForm({ name: "", email: "", password: "", role: "USER" });
+        toast.success("User created");
+      }
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (msg.toLowerCase().includes("email")) toast.error("Email already exists");
+      else toast.error("Failed to create user");
+    }
   };
 
   return (
@@ -70,11 +85,19 @@ export default function AdminUsers() {
       <div className="glass-card p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-display font-bold">Users</h1>
-          <p className="text-muted-foreground mt-1">Manage signups stored in localStorage.</p>
+          <p className="text-muted-foreground mt-1">Manage users stored in the database.</p>
         </div>
         <div className="flex gap-2">
           <div className="w-64 max-w-full">
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
+            <Input
+              value={query}
+              onChange={(e) => {
+                const v = e.target.value;
+                setQuery(v);
+                void reload(v.trim());
+              }}
+              placeholder="Search users..."
+            />
           </div>
           <Button variant="neon" onClick={() => setOpen(true)}>
             <UserPlus className="w-4 h-4" />
@@ -97,8 +120,8 @@ export default function AdminUsers() {
               <div className="col-span-4 font-medium truncate">{u.name}</div>
               <div className="col-span-5 text-sm text-muted-foreground truncate">{u.email}</div>
               <div className="col-span-2 text-sm">
-                <span className={`px-2 py-0.5 rounded-full text-xs ${((u.role || "user") === "admin") ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
-                  {u.role || "user"}
+                <span className={`px-2 py-0.5 rounded-full text-xs ${((u.role || "USER") === "ADMIN") ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>
+                  {String(u.role || "USER").toLowerCase()}
                 </span>
               </div>
               <div className="col-span-1 flex justify-end">
@@ -138,11 +161,11 @@ export default function AdminUsers() {
               <div className="text-sm font-medium mb-1">Role</div>
               <select
                 value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value })}
+                onChange={(e) => setForm({ ...form, role: e.target.value === "ADMIN" ? "ADMIN" : "USER" })}
                 className="w-full px-3 py-2 rounded-md bg-card/60 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
-                <option value="user" className="bg-card">user</option>
-                <option value="admin" className="bg-card">admin</option>
+                <option value="USER" className="bg-card">user</option>
+                <option value="ADMIN" className="bg-card">admin</option>
               </select>
             </div>
           </div>

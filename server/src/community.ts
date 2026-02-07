@@ -458,6 +458,7 @@ router.get("/posts", async (req, res) => {
 
       return {
         id: Number(p.legacyId),
+        status: (p as any).status,
         userId: p.userId,
         user: name,
         avatar,
@@ -874,7 +875,7 @@ router.delete("/posts/:id/comments/:commentId", requireAuth, async (req: any, re
   return res.json({ comments: await mapCommentsForViewerWithUserHydration(updated.comments, actorUserId) });
 });
 
-router.put("/posts", requireAuth, async (req: any, res) => {
+router.put("/posts", requireAdmin, async (req: any, res) => {
   const incoming = Array.isArray(req.body?.posts) ? req.body.posts : [];
   const actorUserId = req.auth.userId as string;
 
@@ -1027,7 +1028,7 @@ router.delete("/follow/:targetUserId", requireAuth, async (req: any, res) => {
   return res.json({ ok: true });
 });
 
-router.get("/users/bulk", async (req, res) => {
+router.get("/users/bulk", requireAuth, async (req, res) => {
   const idsParam = String(req.query?.ids || "").trim();
   const ids = idsParam
     .split(",")
@@ -1048,7 +1049,7 @@ router.get("/users/bulk", async (req, res) => {
   return res.json({ users: out });
 });
 
-router.get("/users/suggested", async (req, res) => {
+router.get("/users/suggested", requireAuth, async (req, res) => {
   const limitRaw = Number(req.query?.limit || 4);
   const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(20, limitRaw)) : 4;
 
@@ -1083,7 +1084,14 @@ router.get("/trending-topics", async (req, res) => {
   const limitRaw = Number(req.query?.limit || 5);
   const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(20, limitRaw)) : 5;
 
-  const posts = await prisma.communityPost.findMany({ select: { content: true } });
+  const auth = getOptionalAuth(req as any);
+  const canSeeRemoved = auth?.role === "ADMIN";
+  const includeRemoved = canSeeRemoved && (String((req as any).query?.includeRemoved || "") === "1" || String((req as any).query?.includeRemoved || "") === "true");
+
+  const posts = await prisma.communityPost.findMany({
+    where: (includeRemoved ? {} : { status: "ACTIVE" }) as any,
+    select: { content: true },
+  });
   const counts = new Map<string, number>();
   for (const p of posts) {
     for (const tag of extractHashtagsFromText(p.content)) {
@@ -1100,9 +1108,14 @@ router.get("/trending-topics", async (req, res) => {
 });
 
 router.get("/stats", async (_req, res) => {
+  const req: any = _req;
+  const auth = getOptionalAuth(req);
+  const canSeeRemoved = auth?.role === "ADMIN";
+  const includeRemoved = canSeeRemoved && (String(req.query?.includeRemoved || "") === "1" || String(req.query?.includeRemoved || "") === "true");
+
   const members = await prisma.user.count();
-  const posts = await prisma.communityPost.count();
-  const discussions = await prisma.communityDiscussion.count();
+  const posts = await prisma.communityPost.count({ where: (includeRemoved ? {} : { status: "ACTIVE" }) as any });
+  const discussions = await prisma.communityDiscussion.count({ where: (includeRemoved ? {} : { status: "ACTIVE" }) as any });
 
   let onlineNow = 0;
   try {
@@ -1159,6 +1172,7 @@ router.get("/discussions", async (_req, res) => {
 
     return {
       id: Number(d.legacyId),
+      status: (d as any).status,
       userId: d.userId,
       category: d.category,
       title: d.title,
@@ -1180,6 +1194,70 @@ router.get("/discussions", async (_req, res) => {
   return res.json({ discussions });
 });
 
+router.post("/discussions", requireAuth, async (req: any, res) => {
+  const actorUserId = String(req.auth?.userId || "");
+  const category = String(req.body?.category || "").trim();
+  const title = String(req.body?.title || "").trim();
+  const content = String(req.body?.content || "").trim();
+
+  if (!category || !title || !content) return res.status(400).json({ error: "invalid_request" });
+
+  const user = await prisma.user.findUnique({ where: { id: actorUserId }, select: { name: true, avatarUrl: true } });
+  const author = (user as any)?.name || "Grovix Member";
+  const avatar = initialsFromName(author);
+  const avatarUrl = (user as any)?.avatarUrl ?? null;
+
+  const baseLegacyId = BigInt(Date.now());
+  let created: any = null;
+  for (let i = 0; i < 5; i++) {
+    const legacyId = baseLegacyId + BigInt(i);
+    try {
+      created = await prisma.communityDiscussion.create({
+        data: {
+          legacyId,
+          userId: actorUserId,
+          category,
+          title,
+          content,
+          author,
+          avatar,
+          replies: [],
+          views: 0,
+          hot: false,
+        } as any,
+      });
+      break;
+    } catch (e: any) {
+      const code = e?.code;
+      if (code === "P2002") continue;
+      throw e;
+    }
+  }
+
+  if (!created) return res.status(500).json({ error: "create_failed" });
+
+  return res.json({
+    discussion: {
+      id: Number(created.legacyId),
+      userId: created.userId,
+      category: created.category,
+      title: created.title,
+      content: created.content,
+      author,
+      avatar,
+      avatarUrl,
+      replies: [],
+      views: created.views,
+      hot: created.hot,
+      pinned: (created as any).pinned ?? false,
+      locked: (created as any).locked ?? false,
+      archived: (created as any).archived ?? false,
+      createdAt: created.createdAt.toISOString(),
+      updatedAt: created.updatedAt.toISOString(),
+    },
+  });
+});
+
 router.post("/discussions/:id/view", async (req, res) => {
   let legacyId: bigint;
   try {
@@ -1196,7 +1274,269 @@ router.post("/discussions/:id/view", async (req, res) => {
   return res.json({ ok: true });
 });
 
-router.put("/discussions", requireAuth, async (req: any, res) => {
+router.post("/discussions/:id/replies", requireAuth, async (req: any, res) => {
+  let legacyId: bigint;
+  try {
+    legacyId = BigInt(req.params.id);
+  } catch {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const actorUserId = String(req.auth?.userId || "");
+  const content = String(req.body?.content || "").trim();
+  const parentReplyIdRaw = req.body?.parentReplyId;
+
+  const parentReplyId = parentReplyIdRaw === undefined || parentReplyIdRaw === null || String(parentReplyIdRaw) === "" ? null : Number(parentReplyIdRaw);
+  if (!content) return res.status(400).json({ error: "invalid_request" });
+  if (parentReplyId !== null && !Number.isFinite(parentReplyId)) return res.status(400).json({ error: "invalid_request" });
+
+  const discussion = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+  if (!discussion) return res.status(404).json({ error: "not_found" });
+  if ((discussion as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
+
+  const user = await prisma.user.findUnique({ where: { id: actorUserId }, select: { name: true, avatarUrl: true } });
+  const name = (user as any)?.name || "Grovix Member";
+  const avatar = initialsFromName(name);
+  const avatarUrl = (user as any)?.avatarUrl ?? null;
+
+  const repliesRaw = Array.isArray((discussion as any).replies) ? ((discussion as any).replies as any[]) : [];
+
+  const generateReplyId = () => {
+    // Keep numeric IDs (frontend assumes number) but reduce collision risk.
+    // Date.now() is ms; multiply by 1000 and add a 0-999 random to allow many ids per ms.
+    const base = Date.now() * 1000;
+    const rand = Math.floor(Math.random() * 1000);
+    return base + rand;
+  };
+
+  let replyId = generateReplyId();
+  for (let i = 0; i < 10; i++) {
+    if (!findNodeInTree(repliesRaw, replyId)) break;
+    replyId = generateReplyId();
+  }
+
+  const replyNode: any = {
+    id: replyId,
+    userId: actorUserId,
+    user: name,
+    avatar,
+    avatarUrl,
+    content,
+    timeAgo: "Just now",
+    likes: 0,
+    liked: false,
+    replies: [],
+  };
+
+  let nextReplies: any[] = repliesRaw;
+
+  if (parentReplyId !== null) {
+    const added = addReplyToTree(repliesRaw as any, parentReplyId, replyNode as any);
+    nextReplies = added.added ? added.next : repliesRaw;
+    if (!added.added) return res.status(404).json({ error: "parent_not_found" });
+  } else {
+    nextReplies = [...repliesRaw, replyNode];
+  }
+
+  const updated = await prisma.communityDiscussion.update({ where: { legacyId }, data: { replies: nextReplies } });
+
+  const ids = new Set<string>();
+  ids.add(String(updated.userId));
+  collectDiscussionReplyUserIds((updated as any).replies, ids);
+  const userMap = await getUserMap(ids);
+
+  const mapReplyTree = (nodes: any): any[] => {
+    const list = Array.isArray(nodes) ? nodes : [];
+    return list.map((n) => {
+      const profile = userMap.get(String(n?.userId || ""));
+      const nn = profile?.name || String(n?.user || "");
+      const av = initialsFromName(nn);
+      const au = profile?.avatarUrl ?? null;
+      return {
+        ...n,
+        user: nn,
+        avatar: av,
+        avatarUrl: au,
+        replies: mapReplyTree((n as any)?.replies),
+      };
+    });
+  };
+
+  const authorProfile = userMap.get(String(updated.userId));
+  const author = authorProfile?.name || (updated as any).author;
+  const authorAvatar = initialsFromName(author);
+  const authorAvatarUrl = authorProfile?.avatarUrl ?? null;
+
+  return res.json({
+    discussion: {
+      id: Number(updated.legacyId),
+      userId: updated.userId,
+      category: updated.category,
+      title: updated.title,
+      content: updated.content,
+      author,
+      avatar: authorAvatar,
+      avatarUrl: authorAvatarUrl,
+      replies: mapReplyTree((updated as any).replies),
+      views: updated.views,
+      hot: updated.hot,
+      pinned: (updated as any).pinned ?? false,
+      locked: (updated as any).locked ?? false,
+      archived: (updated as any).archived ?? false,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    },
+  });
+});
+
+router.post("/discussions/:id/replies/:replyId/like", requireAuth, async (req: any, res) => {
+  let legacyId: bigint;
+  try {
+    legacyId = BigInt(req.params.id);
+  } catch {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const replyId = Number(req.params.replyId);
+  if (!Number.isFinite(replyId)) return res.status(400).json({ error: "invalid_reply_id" });
+
+  const discussion = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+  if (!discussion) return res.status(404).json({ error: "not_found" });
+  if ((discussion as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
+
+  const repliesRaw = Array.isArray((discussion as any).replies) ? ((discussion as any).replies as any[]) : [];
+  const updatedTree = updateNodeInTreeGeneric(repliesRaw, replyId, (n: any) => {
+    const liked = !!n?.liked;
+    const likes = Number(n?.likes || 0) || 0;
+    return { ...n, liked: !liked, likes: liked ? Math.max(0, likes - 1) : likes + 1 };
+  });
+  if (!updatedTree.updated) return res.status(404).json({ error: "not_found" });
+
+  const updated = await prisma.communityDiscussion.update({ where: { legacyId }, data: { replies: updatedTree.next } });
+
+  const ids = new Set<string>();
+  ids.add(String(updated.userId));
+  collectDiscussionReplyUserIds((updated as any).replies, ids);
+  const userMap = await getUserMap(ids);
+
+  const mapReplyTree = (nodes: any): any[] => {
+    const list = Array.isArray(nodes) ? nodes : [];
+    return list.map((n) => {
+      const profile = userMap.get(String(n?.userId || ""));
+      const nn = profile?.name || String(n?.user || "");
+      const av = initialsFromName(nn);
+      const au = profile?.avatarUrl ?? null;
+      return {
+        ...n,
+        user: nn,
+        avatar: av,
+        avatarUrl: au,
+        replies: mapReplyTree((n as any)?.replies),
+      };
+    });
+  };
+
+  const authorProfile = userMap.get(String(updated.userId));
+  const author = authorProfile?.name || (updated as any).author;
+  const authorAvatar = initialsFromName(author);
+  const authorAvatarUrl = authorProfile?.avatarUrl ?? null;
+
+  return res.json({
+    discussion: {
+      id: Number(updated.legacyId),
+      userId: updated.userId,
+      category: updated.category,
+      title: updated.title,
+      content: updated.content,
+      author,
+      avatar: authorAvatar,
+      avatarUrl: authorAvatarUrl,
+      replies: mapReplyTree((updated as any).replies),
+      views: updated.views,
+      hot: updated.hot,
+      pinned: (updated as any).pinned ?? false,
+      locked: (updated as any).locked ?? false,
+      archived: (updated as any).archived ?? false,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    },
+  });
+});
+
+router.delete("/discussions/:id/replies/:replyId", requireAuth, async (req: any, res) => {
+  let legacyId: bigint;
+  try {
+    legacyId = BigInt(req.params.id);
+  } catch {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const replyId = Number(req.params.replyId);
+  if (!Number.isFinite(replyId)) return res.status(400).json({ error: "invalid_reply_id" });
+
+  const discussion = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+  if (!discussion) return res.status(404).json({ error: "not_found" });
+  if ((discussion as any).status === "REMOVED") return res.status(404).json({ error: "not_found" });
+
+  const repliesRaw = Array.isArray((discussion as any).replies) ? ((discussion as any).replies as any[]) : [];
+  const deleted = deleteNodeFromTree(repliesRaw as any, replyId);
+  if (!deleted.deleted) return res.status(404).json({ error: "not_found" });
+
+  const ownerUserId = String((deleted.deleted as any)?.userId || "");
+  if (!ownerUserId || !canEditOwnerContent(req, ownerUserId)) return res.status(403).json({ error: "forbidden" });
+
+  const updated = await prisma.communityDiscussion.update({ where: { legacyId }, data: { replies: deleted.next } });
+
+  const ids = new Set<string>();
+  ids.add(String(updated.userId));
+  collectDiscussionReplyUserIds((updated as any).replies, ids);
+  const userMap = await getUserMap(ids);
+
+  const mapReplyTree = (nodes: any): any[] => {
+    const list = Array.isArray(nodes) ? nodes : [];
+    return list.map((n) => {
+      const profile = userMap.get(String(n?.userId || ""));
+      const nn = profile?.name || String(n?.user || "");
+      const av = initialsFromName(nn);
+      const au = profile?.avatarUrl ?? null;
+      return {
+        ...n,
+        user: nn,
+        avatar: av,
+        avatarUrl: au,
+        replies: mapReplyTree((n as any)?.replies),
+      };
+    });
+  };
+
+  const authorProfile = userMap.get(String(updated.userId));
+  const author = authorProfile?.name || (updated as any).author;
+  const authorAvatar = initialsFromName(author);
+  const authorAvatarUrl = authorProfile?.avatarUrl ?? null;
+
+  return res.json({
+    discussion: {
+      id: Number(updated.legacyId),
+      userId: updated.userId,
+      category: updated.category,
+      title: updated.title,
+      content: updated.content,
+      author,
+      avatar: authorAvatar,
+      avatarUrl: authorAvatarUrl,
+      replies: mapReplyTree((updated as any).replies),
+      views: updated.views,
+      hot: updated.hot,
+      pinned: (updated as any).pinned ?? false,
+      locked: (updated as any).locked ?? false,
+      archived: (updated as any).archived ?? false,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    },
+  });
+});
+
+router.put("/discussions", requireAdmin, async (req: any, res) => {
   const incoming = Array.isArray(req.body?.discussions) ? req.body.discussions : [];
   const actorUserId = req.auth.userId as string;
 
@@ -1323,6 +1663,71 @@ router.delete("/notifications/:id", requireAuth, async (req: any, res) => {
   if (!id) return res.status(400).json({ error: "invalid_id" });
   const db = prisma as any;
   await db.communityNotification.deleteMany({ where: { id, userId } });
+  return res.json({ ok: true });
+});
+
+router.get("/admin/notifications", requireAdmin, async (req: any, res) => {
+  const q = String(req.query?.q || "").trim().toLowerCase();
+  const userId = String(req.query?.userId || "").trim();
+  const unreadOnly = String(req.query?.unread || "") === "1" || String(req.query?.unread || "") === "true";
+
+  const takeRaw = Number(req.query?.limit || 200);
+  const take = Number.isFinite(takeRaw) ? Math.min(Math.max(takeRaw, 1), 500) : 200;
+
+  const db = prisma as any;
+
+  const rows = await db.communityNotification.findMany({
+    where: {
+      ...(userId ? { userId } : {}),
+      ...(unreadOnly ? { readAt: null } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+
+  const userIds = Array.from(new Set((rows as any[]).map((r: any) => String(r.userId)).filter(Boolean)));
+  const users: Array<{ id: string; name: string; email: string; avatarUrl: string | null }> = userIds.length
+    ? await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true, avatarUrl: true } })
+    : [];
+  const userMap = new Map<string, { id: string; name: string; email: string; avatarUrl: string | null }>();
+  for (const u of users) userMap.set(String(u.id), u);
+
+  const mapped = (rows as any[]).map((n: any) => {
+    const u = userMap.get(String(n.userId));
+    return {
+      id: String(n.id),
+      userId: String(n.userId),
+      user: u ? { id: String(u.id), name: String(u.name || ""), email: String(u.email || ""), avatarUrl: u.avatarUrl || null } : null,
+      type: String(n.type),
+      title: String(n.title || ""),
+      body: String(n.body || ""),
+      link: n.link ? String(n.link) : null,
+      meta: n.meta,
+      readAt: n.readAt ? new Date(n.readAt).toISOString() : null,
+      createdAt: new Date(n.createdAt).toISOString(),
+    };
+  });
+
+  const filtered = q
+    ? mapped.filter((n: any) => {
+        if (String(n.title || "").toLowerCase().includes(q)) return true;
+        if (String(n.body || "").toLowerCase().includes(q)) return true;
+        if (String(n.type || "").toLowerCase().includes(q)) return true;
+        if (String(n.user?.email || "").toLowerCase().includes(q)) return true;
+        if (String(n.user?.name || "").toLowerCase().includes(q)) return true;
+        if (String(n.userId || "").toLowerCase().includes(q)) return true;
+        return false;
+      })
+    : mapped;
+
+  return res.json({ notifications: filtered });
+});
+
+router.delete("/admin/notifications/:id", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const db = prisma as any;
+  await db.communityNotification.deleteMany({ where: { id } });
   return res.json({ ok: true });
 });
 
@@ -1454,6 +1859,60 @@ router.get("/admin/dashboard", requireAdmin, async (_req, res) => {
   });
 });
 
+router.get("/admin/insights", requireAdmin, async (req: any, res) => {
+  const db = prisma as any;
+  const daysRaw = Number(req.query?.days);
+  const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, Math.floor(daysRaw))) : 7;
+
+  const now = new Date();
+  const endUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0));
+  const startUtc = new Date(endUtc.getTime() - days * 24 * 60 * 60 * 1000);
+
+  const [reports, actions] = await Promise.all([
+    db.communityReport.findMany({
+      where: { createdAt: { gte: startUtc, lt: endUtc } },
+      select: { createdAt: true },
+    }),
+    db.communityModerationAction.findMany({
+      where: { createdAt: { gte: startUtc, lt: endUtc } },
+      select: { createdAt: true, actionType: true },
+    }),
+  ]);
+
+  const toUtcDayKey = (d: Date) => {
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const dayKeys: string[] = [];
+  for (let i = 0; i < days; i++) {
+    const t = new Date(startUtc.getTime() + i * 24 * 60 * 60 * 1000);
+    dayKeys.push(toUtcDayKey(t));
+  }
+
+  const counts: Record<string, { reportsCreated: number; actionsCreated: number; removeContentActions: number }> = {};
+  for (const k of dayKeys) counts[k] = { reportsCreated: 0, actionsCreated: 0, removeContentActions: 0 };
+
+  for (const r of reports) {
+    const k = toUtcDayKey(new Date(r.createdAt));
+    if (counts[k]) counts[k].reportsCreated += 1;
+  }
+  for (const a of actions) {
+    const k = toUtcDayKey(new Date(a.createdAt));
+    if (counts[k]) {
+      counts[k].actionsCreated += 1;
+      if (String(a.actionType) === "REMOVE_CONTENT") counts[k].removeContentActions += 1;
+    }
+  }
+
+  return res.json({
+    range: { start: startUtc.toISOString(), end: endUtc.toISOString(), days },
+    series: dayKeys.map((k) => ({ day: k, ...counts[k] })),
+  });
+});
+
 router.get("/admin/reports", requireAdmin, async (req: any, res) => {
   const db = prisma as any;
   const status = String(req.query?.status || "OPEN").toUpperCase();
@@ -1511,6 +1970,119 @@ router.get("/admin/reports", requireAdmin, async (req: any, res) => {
       resolutionActionId: r.resolutionActionId,
     })),
   });
+});
+
+router.post("/admin/discussions/:id/clear-replies", requireAdmin, async (req: any, res) => {
+  let legacyId: bigint;
+  try {
+    legacyId = BigInt(req.params.id);
+  } catch {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const existing = await prisma.communityDiscussion.findUnique({ where: { legacyId } });
+  if (!existing) return res.json({ ok: true });
+  if ((existing as any).status === "REMOVED") return res.json({ ok: true });
+
+  await prisma.communityDiscussion.update({ where: { legacyId }, data: { replies: [] } as any });
+  broadcastCommunityEvent("discussions_changed", { discussionId: Number(legacyId), action: "clear_replies" });
+  return res.json({ ok: true });
+});
+
+router.get("/admin/reports/export.csv", requireAdmin, async (req: any, res) => {
+  const db = prisma as any;
+  const status = String(req.query?.status || "OPEN").toUpperCase();
+  const targetType = req.query?.targetType ? normalizeReportTargetType(req.query.targetType) : null;
+  const severity = req.query?.severity ? normalizeSeverity(req.query.severity) : null;
+  const qRaw = typeof req.query?.q === "string" ? String(req.query.q) : "";
+  const q = qRaw.trim();
+
+  const limitRaw = Number(req.query?.limit);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.floor(limitRaw))) : 2000;
+
+  const where: any = {};
+  if (status === "OPEN" || status === "RESOLVED" || status === "DISMISSED") where.status = status;
+  if (targetType) where.targetType = targetType;
+  if (severity) where.severity = severity;
+
+  if (q) {
+    const or: any[] = [
+      { id: { contains: q } },
+      { reporterUserId: { contains: q } },
+      { targetUserId: { contains: q } },
+      { reason: { contains: q } },
+      { details: { contains: q } },
+    ];
+
+    const n = Number(q);
+    if (Number.isFinite(n) && String(Math.floor(n)) === q) {
+      try {
+        or.push({ targetLegacyId: BigInt(q) });
+      } catch {
+      }
+      try {
+        or.push({ targetNodeId: BigInt(q) });
+      } catch {
+      }
+    }
+
+    where.OR = or;
+  }
+
+  const items = await db.communityReport.findMany({ where, orderBy: { createdAt: "desc" }, take: limit });
+
+  const csvEscape = (v: any) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    const needs = s.includes(",") || s.includes("\n") || s.includes("\r") || s.includes('"');
+    const escaped = s.replace(/"/g, '""');
+    return needs ? `"${escaped}"` : escaped;
+  };
+
+  const header = [
+    "id",
+    "status",
+    "severity",
+    "targetType",
+    "targetLegacyId",
+    "targetNodeId",
+    "targetUserId",
+    "reporterUserId",
+    "reason",
+    "details",
+    "createdAt",
+    "resolvedAt",
+    "resolvedByUserId",
+    "resolutionActionId",
+    "guidelineId",
+  ];
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename=reports_export_${Date.now()}.csv`);
+  res.write(`${header.join(",")}\n`);
+
+  for (const r of items) {
+    const row = [
+      r.id,
+      r.status,
+      r.severity,
+      r.targetType,
+      r.targetLegacyId ? Number(r.targetLegacyId) : "",
+      r.targetNodeId ? Number(r.targetNodeId) : "",
+      r.targetUserId ?? "",
+      r.reporterUserId,
+      r.reason,
+      r.details ?? "",
+      r.createdAt ? new Date(r.createdAt).toISOString() : "",
+      r.resolvedAt ? new Date(r.resolvedAt).toISOString() : "",
+      r.resolvedByUserId ?? "",
+      r.resolutionActionId ?? "",
+      r.guidelineId ?? "",
+    ].map(csvEscape);
+    res.write(`${row.join(",")}\n`);
+  }
+
+  return res.end();
 });
 
 router.post("/admin/reports/:id/dismiss", requireAdmin, async (req: any, res) => {

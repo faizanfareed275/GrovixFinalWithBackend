@@ -278,6 +278,7 @@ enum CertificateStatus {
 
 enum StoredFilePurpose {
   OFFER_LETTER
+  RESUME
   TASK_ATTACHMENT
   TASK_SUBMISSION
   CERTIFICATE
@@ -563,6 +564,8 @@ model InternshipBatch {
   capacity      Int?
   status        InternshipBatchStatus @default(DRAFT)
 
+  applicants    Int                  @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -595,11 +598,14 @@ model InternshipApplication {
   offerBody      String?
   offerFileId    String?
 
+  resumeFileId   String?
+
   internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
   batch      InternshipBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   offerFile StoredFile? @relation("OfferLetterFile", fields: [offerFileId], references: [id], onDelete: SetNull)
+  resumeFile StoredFile? @relation("ResumeFile", fields: [resumeFileId], references: [id], onDelete: SetNull)
 
   @@unique([batchId, userId])
   @@index([batchId])
@@ -780,6 +786,7 @@ model StoredFile {
   createdAt DateTime @default(now())
 
   offerLetterApplications InternshipApplication[] @relation("OfferLetterFile")
+  resumeApplications InternshipApplication[] @relation("ResumeFile")
   taskTemplateAttachments InternshipTaskTemplate[] @relation("TaskTemplateAttachment")
   taskAttemptFiles InternshipTaskAttempt[] @relation("TaskAttemptFile")
   certificateFiles InternshipCertificate[] @relation("CertificateFile")

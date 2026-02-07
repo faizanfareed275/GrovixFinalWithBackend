@@ -1,10 +1,24 @@
 import { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { isAdminUser } from "@/admin/lib/auth";
+import { useAuth } from "@/hooks/useAuth";
 
 export function AdminGuard({ children }: { children: ReactNode }) {
-  if (!isAdminUser()) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-20">
+          <div className="glass-card p-8 max-w-lg mx-auto text-center">
+            <h1 className="text-2xl font-display font-bold mb-2">Loading…</h1>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || String(user.role || "").toUpperCase() !== "ADMIN") {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-20">

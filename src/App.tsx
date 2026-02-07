@@ -12,22 +12,19 @@ import { AdminGuard, AdminIndexRedirect } from "@/admin/components/AdminGuard";
 import AdminDashboard from "@/admin/pages/AdminDashboard";
 import AdminUsers from "@/admin/pages/AdminUsers";
 import AdminCommunity from "@/admin/pages/AdminCommunity";
-import AdminChallenges from "@/admin/pages/AdminChallenges";
-import AdminInternships from "@/admin/pages/AdminInternships";
-import AdminEvents from "@/admin/pages/AdminEvents";
-import AdminMessages from "@/admin/pages/AdminMessages";
-import AdminNotifications from "@/admin/pages/AdminNotifications";
-import AdminStorage from "@/admin/pages/AdminStorage";
 import AdminDiscussions from "@/admin/pages/AdminDiscussions";
-import AdminProfileBadges from "@/admin/pages/AdminProfileBadges";
 import AdminModerationReports from "@/admin/pages/AdminModerationReports";
 import AdminCommunityGuidelines from "@/admin/pages/AdminCommunityGuidelines";
 import AdminCommunityCategories from "@/admin/pages/AdminCommunityCategories";
 import AdminCommunityUserDetail from "@/admin/pages/AdminCommunityUserDetail";
 import AdminCommunityInsights from "@/admin/pages/AdminCommunityInsights";
+import AdminProfileBadges from "@/admin/pages/AdminProfileBadges";
+import AdminChallenges from "@/admin/pages/AdminChallenges";
+import AdminEvents from "@/admin/pages/AdminEvents";
+import AdminMessages from "@/admin/pages/AdminMessages";
+import AdminNotifications from "@/admin/pages/AdminNotifications";
+import AdminStorage from "@/admin/pages/AdminStorage";
 import AdminInternshipCatalog from "@/admin/pages/AdminInternshipCatalog";
-import AdminInternshipTasks from "@/admin/pages/AdminInternshipTasks";
-import AdminInternshipSubmissions from "@/admin/pages/AdminInternshipSubmissions";
 import AdminInternshipV2Templates from "@/admin/pages/AdminInternshipV2Templates";
 import AdminInternshipV2Attempts from "@/admin/pages/AdminInternshipV2Attempts";
 import AdminInternshipV2Batches from "@/admin/pages/AdminInternshipV2Batches";
@@ -35,6 +32,7 @@ import AdminInternshipV2Applications from "@/admin/pages/AdminInternshipV2Applic
 import AdminInternshipV2Enrollments from "@/admin/pages/AdminInternshipV2Enrollments";
 import AdminInternshipV2Assignments from "@/admin/pages/AdminInternshipV2Assignments";
 import AdminInternshipV2BadgeRules from "@/admin/pages/AdminInternshipV2BadgeRules";
+import AdminInternshipV2Analytics from "@/admin/pages/AdminInternshipV2Analytics";
 import Index from "./pages/Index";
 import Challenges from "./pages/Challenges";
 import ChallengeWorkspace from "./pages/ChallengeWorkspace";
@@ -100,10 +98,7 @@ const App = () => (
                   <Route path="community-insights" element={<AdminCommunityInsights />} />
                   <Route path="profile" element={<AdminProfileBadges />} />
                   <Route path="challenges" element={<AdminChallenges />} />
-                  <Route path="internships" element={<AdminInternships />} />
                   <Route path="internship-catalog" element={<AdminInternshipCatalog />} />
-                  <Route path="internship-tasks" element={<AdminInternshipTasks />} />
-                  <Route path="internship-submissions" element={<AdminInternshipSubmissions />} />
                   <Route path="internship-v2-templates" element={<AdminInternshipV2Templates />} />
                   <Route path="internship-v2-badge-rules" element={<AdminInternshipV2BadgeRules />} />
                   <Route path="internship-v2-assignments" element={<AdminInternshipV2Assignments />} />
@@ -111,6 +106,7 @@ const App = () => (
                   <Route path="internship-v2-batches" element={<AdminInternshipV2Batches />} />
                   <Route path="internship-v2-applications" element={<AdminInternshipV2Applications />} />
                   <Route path="internship-v2-enrollments" element={<AdminInternshipV2Enrollments />} />
+                  <Route path="internship-v2-analytics" element={<AdminInternshipV2Analytics />} />
                   <Route path="events" element={<AdminEvents />} />
                   <Route path="messages" element={<AdminMessages />} />
                   <Route path="notifications" element={<AdminNotifications />} />

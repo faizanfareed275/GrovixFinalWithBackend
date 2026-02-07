@@ -1,82 +1,65 @@
-import { useMemo, useState } from "react";
-import { Download, Upload, Trash2, Copy } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
 
-function collectYouthxpKeys() {
-  const keys: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (!k) continue;
-    if (k.startsWith("youthxp_")) keys.push(k);
-  }
-  keys.sort();
-  return keys;
-}
+type StoredFileRow = {
+  id: string;
+  purpose: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storageProvider: string | null;
+  externalUrl: string | null;
+  createdAt: string;
+};
 
 export default function AdminStorage() {
-  const [importText, setImportText] = useState("");
+  const [query, setQuery] = useState("");
+  const [files, setFiles] = useState<StoredFileRow[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const snapshot = useMemo(() => {
-    const keys = collectYouthxpKeys();
-    const data: Record<string, string> = {};
-    keys.forEach(k => {
-      const v = localStorage.getItem(k);
-      if (v !== null) data[k] = v;
-    });
-    return { keys, data };
-  }, []);
-
-  const exportJson = () => {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      data: snapshot.data,
-    };
-    const text = JSON.stringify(payload, null, 2);
-    navigator.clipboard.writeText(text).then(() => {
-      toast.success("Export copied to clipboard");
-    }).catch(() => {
-      toast.error("Failed to copy export to clipboard");
-    });
-  };
-
-  const downloadJson = () => {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      data: snapshot.data,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `grovix-backup-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const importJson = () => {
+  const load = async (q?: string) => {
+    setLoading(true);
     try {
-      const parsed = JSON.parse(importText);
-      const data = parsed?.data;
-      if (!data || typeof data !== "object") {
-        toast.error("Invalid backup format");
-        return;
-      }
-      Object.entries(data as Record<string, string>).forEach(([k, v]) => {
-        if (k.startsWith("youthxp_")) {
-          localStorage.setItem(k, v);
-        }
-      });
-      toast.success("Backup imported. Reload the page to apply everywhere.");
+      const qs = new URLSearchParams();
+      if (q) qs.set("q", q);
+      qs.set("limit", "200");
+      const d = await apiFetch<{ files: StoredFileRow[] }>(`/files/admin/list?${qs.toString()}`);
+      setFiles(Array.isArray(d?.files) ? d.files : []);
     } catch {
-      toast.error("Invalid JSON");
+      setFiles([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const clearAllYouthxp = () => {
-    const keys = collectYouthxpKeys();
-    keys.forEach(k => localStorage.removeItem(k));
-    toast.success("All youthxp_* keys cleared. Reload the page.");
+  useEffect(() => {
+    void load("");
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return files;
+    return files.filter((f) => {
+      if (String(f.id).toLowerCase().includes(q)) return true;
+      if (String(f.fileName).toLowerCase().includes(q)) return true;
+      if (String(f.mimeType).toLowerCase().includes(q)) return true;
+      if (String(f.purpose).toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [files, query]);
+
+  const handleDelete = async (id: string) => {
+    try {
+      await apiFetch(`/files/admin/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setFiles((prev) => prev.filter((f) => f.id !== id));
+      toast.success("File deleted");
+    } catch {
+      toast.error("Failed to delete file");
+    }
   };
 
   return (
@@ -84,58 +67,70 @@ export default function AdminStorage() {
       <div className="glass-card p-6">
         <h1 className="text-2xl font-display font-bold">Storage Tools</h1>
         <p className="text-muted-foreground mt-1">
-          Backup/restore demo data stored in localStorage.
+          Browse files stored in the database.
         </p>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="glass-card p-6 space-y-4">
-          <div className="font-display font-bold">Export</div>
-          <div className="text-sm text-muted-foreground">
-            Export all <span className="font-mono">youthxp_*</span> keys.
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={exportJson}>
-              <Copy className="w-4 h-4" />
-              Copy JSON
-            </Button>
-            <Button variant="outline" onClick={downloadJson}>
-              <Download className="w-4 h-4" />
-              Download JSON
-            </Button>
-          </div>
-          <div className="text-xs text-muted-foreground">Keys found: {snapshot.keys.length}</div>
+      <div className="glass-card p-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="font-display font-bold">Files</div>
+          <div className="text-sm text-muted-foreground">Search by id, file name, purpose, or mime type.</div>
         </div>
-
-        <div className="glass-card p-6 space-y-4">
-          <div className="font-display font-bold">Import</div>
-          <div className="text-sm text-muted-foreground">
-            Paste a backup JSON (same format as export), then import.
+        <div className="flex gap-2 items-center">
+          <div className="w-80 max-w-full">
+            <Input
+              value={query}
+              onChange={(e) => {
+                const v = e.target.value;
+                setQuery(v);
+                void load(v.trim());
+              }}
+              placeholder="Search files..."
+            />
           </div>
-          <textarea
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            className="w-full h-40 p-3 rounded-lg bg-muted/20 border border-border font-mono text-xs focus:outline-none"
-            placeholder='{ "exportedAt": "...", "data": { "youthxp_users": "[...]" } }'
-          />
-          <div className="flex gap-2">
-            <Button variant="neon" onClick={importJson}>
-              <Upload className="w-4 h-4" />
-              Import
-            </Button>
-          </div>
+          {loading && <div className="text-xs text-muted-foreground">Loading…</div>}
         </div>
       </div>
 
-      <div className="glass-card p-6 flex items-center justify-between">
-        <div>
-          <div className="font-display font-bold">Danger Zone</div>
-          <div className="text-sm text-muted-foreground">Remove all demo data from localStorage.</div>
+      <div className="glass-card overflow-hidden">
+        <div className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-border text-xs text-muted-foreground">
+          <div className="col-span-4">File</div>
+          <div className="col-span-2">Purpose</div>
+          <div className="col-span-3">Type</div>
+          <div className="col-span-2">Created</div>
+          <div className="col-span-1 text-right">Action</div>
         </div>
-        <Button variant="destructive" onClick={clearAllYouthxp}>
-          <Trash2 className="w-4 h-4" />
-          Clear All
-        </Button>
+
+        <div className="divide-y divide-border">
+          {filtered.map((f) => (
+            <div key={f.id} className="grid grid-cols-12 gap-2 px-4 py-3 items-center">
+              <div className="col-span-4 min-w-0">
+                <div className="text-sm font-medium truncate">{f.fileName}</div>
+                <div className="text-[11px] text-muted-foreground truncate">{f.id} • {(Number(f.sizeBytes || 0) / 1024).toFixed(1)} KB</div>
+              </div>
+              <div className="col-span-2 text-xs text-muted-foreground truncate">{f.purpose}</div>
+              <div className="col-span-3 text-xs text-muted-foreground truncate">{f.mimeType}</div>
+              <div className="col-span-2 text-xs text-muted-foreground truncate">{new Date(f.createdAt).toLocaleDateString()}</div>
+              <div className="col-span-1 flex justify-end gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(`/files/${encodeURIComponent(f.id)}`, "_blank")}
+                  title="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void handleDelete(f.id)} title="Delete">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
+
+          {filtered.length === 0 && (
+            <div className="p-8 text-center text-muted-foreground">No files found.</div>
+          )}
+        </div>
       </div>
     </div>
   );

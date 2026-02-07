@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "./db";
-import { requireAuth } from "./middleware/auth";
+import { requireAdmin, requireAuth } from "./middleware/auth";
 
 const router = Router();
 
@@ -52,6 +52,60 @@ router.get("/completions", requireAuth, async (req: any, res) => {
     orderBy: { completedAt: "desc" },
   });
   return res.json({ completions });
+});
+
+router.get("/admin/completions", requireAdmin, async (req: any, res) => {
+  const userId = String(req.query?.userId || "");
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+
+  const completions = await prisma.challengeCompletion.findMany({
+    where: { userId },
+    orderBy: { completedAt: "desc" },
+    take: 500,
+  });
+
+  return res.json({
+    completions: completions.map((c) => ({
+      id: c.id,
+      challengeId: c.challengeId,
+      title: c.title,
+      category: c.category,
+      xpEarned: c.xpEarned,
+      completedAt: c.completedAt.toISOString(),
+    })),
+  });
+});
+
+router.delete("/admin/completions/:id", requireAdmin, async (req: any, res) => {
+  const id = String(req.params.id || "");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+
+  const existing = await prisma.challengeCompletion.findUnique({ where: { id } });
+  if (!existing) return res.status(404).json({ error: "not_found" });
+
+  await prisma.$transaction([
+    prisma.challengeCompletion.delete({ where: { id } }),
+    prisma.user.update({ where: { id: existing.userId }, data: { xp: { decrement: existing.xpEarned } } }),
+  ]);
+
+  return res.json({ ok: true });
+});
+
+router.post("/admin/completions/clear", requireAdmin, async (req: any, res) => {
+  const schema = z.object({ userId: z.string().min(1) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_request" });
+
+  const userId = parsed.data.userId;
+  const rows = await prisma.challengeCompletion.findMany({ where: { userId }, select: { xpEarned: true } });
+  const totalXp = rows.reduce((sum, r) => sum + (Number(r.xpEarned || 0) || 0), 0);
+
+  await prisma.$transaction([
+    prisma.challengeCompletion.deleteMany({ where: { userId } }),
+    ...(totalXp ? [prisma.user.update({ where: { id: userId }, data: { xp: { decrement: totalXp } } })] : []),
+  ]);
+
+  return res.json({ ok: true, removed: rows.length });
 });
 
 router.post("/:id/complete", requireAuth, async (req: any, res) => {

@@ -1,5 +1,6 @@
 import {
   evaluateAndPromoteBadge,
+  enforceV2ProgressionForEnrollment,
   lockExpiredAssignments,
   maybeIssueV2CertificateByEnrollment,
   recomputeAssignmentScheduleForEnrollment,
@@ -13,6 +14,7 @@ let running = false;
 async function syncEnrollment(enrollmentId: string) {
   await seedAssignmentsForEnrollment(enrollmentId);
   await recomputeAssignmentScheduleForEnrollment(enrollmentId);
+  await enforceV2ProgressionForEnrollment(enrollmentId);
   await lockExpiredAssignments(enrollmentId);
   await evaluateAndPromoteBadge(enrollmentId, null);
   await maybeIssueV2CertificateByEnrollment(enrollmentId);
