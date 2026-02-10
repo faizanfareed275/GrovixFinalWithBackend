@@ -19,6 +19,22 @@ const cardVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
 };
 
+function normalizeItem(raw: any, userXP: number) {
+  const xpRequired = Number(raw?.xpRequired) || 0;
+  const skills = Array.isArray(raw?.skills) ? raw.skills.map((s: any) => String(s)) : [];
+  return {
+    id: raw?.id,
+    title: String(raw?.title || ""),
+    company: String(raw?.company || ""),
+    type: raw?.type === "paid" ? "paid" : "free",
+    xpRequired,
+    salary: raw?.salary ?? null,
+    duration: String(raw?.duration || ""),
+    skills,
+    unlocked: userXP >= xpRequired,
+  };
+}
+
 export function FeaturedInternships() {
   const [userXP, setUserXP] = useState(0);
   const [items, setItems] = useState<any[]>([]);
@@ -28,7 +44,7 @@ export function FeaturedInternships() {
       .then((d) => setUserXP(Number(d.xp) || 0))
       .catch(() => {});
 
-    apiFetch<{ internships: any[] }>("/internships")
+    apiFetch<{ internships: any[] }>("/internships/public")
       .then((d) => {
         if (Array.isArray(d.internships)) setItems(d.internships);
       })
@@ -36,17 +52,7 @@ export function FeaturedInternships() {
   }, []);
 
   const internships = useMemo(() => {
-    return items.slice(0, 4).map((i) => ({
-      id: i.id,
-      title: i.title,
-      company: i.company,
-      type: i.type,
-      xpRequired: i.xpRequired,
-      salary: i.salary,
-      duration: i.duration,
-      skills: i.skills,
-      unlocked: userXP >= i.xpRequired,
-    }));
+    return items.slice(0, 4).map((i) => normalizeItem(i, userXP));
   }, [items, userXP]);
 
   return (

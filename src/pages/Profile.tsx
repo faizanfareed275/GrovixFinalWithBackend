@@ -385,7 +385,7 @@ export default function Profile() {
     
     loadData();
 
-    apiFetch<{ internships: Internship[] }>("/internships")
+    apiFetch<{ internships: Internship[] }>("/internships/public")
       .then((d) => setInternships(d.internships || []))
       .catch(() => setInternships([]));
     

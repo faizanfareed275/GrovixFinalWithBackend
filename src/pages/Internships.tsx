@@ -19,6 +19,24 @@ interface CompletedInternship {
   completionDate: string;
 }
 
+function normalizeInternship(raw: any): Internship {
+  const skills = Array.isArray(raw?.skills) ? raw.skills.map((s: any) => String(s)) : [];
+  const type = raw?.type === "paid" ? "paid" : "free";
+  return {
+    id: Number(raw?.id) || 0,
+    title: String(raw?.title || ""),
+    company: String(raw?.company || ""),
+    type,
+    xpRequired: Number(raw?.xpRequired) || 0,
+    salary: raw?.salary ? String(raw.salary) : null,
+    duration: String(raw?.duration || ""),
+    location: String(raw?.location || ""),
+    skills,
+    description: String(raw?.description || ""),
+    applicants: Number(raw?.applicants) || 0,
+  };
+}
+
 export default function Internships() {
   const { user } = useAuth();
   const [activeTrack, setActiveTrack] = useState<"all" | "free" | "paid">("all");
@@ -36,8 +54,11 @@ export default function Internships() {
   }, []);
 
   useEffect(() => {
-    apiFetch<{ internships: Internship[] }>("/internships")
-      .then((data) => setInternships(data.internships || []))
+    apiFetch<{ internships: Internship[] }>("/internships/public")
+      .then((data) => {
+        const list = Array.isArray((data as any)?.internships) ? (data as any).internships : [];
+        setInternships(list.map((x: any) => normalizeInternship(x)).filter((x: Internship) => Number(x.id) > 0));
+      })
       .catch(() => setInternships([]));
   }, []);
 

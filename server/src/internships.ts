@@ -3092,6 +3092,33 @@ router.post("/:id/tasks/:taskId/submit", requireAuth, async (req: any, res) => {
   return res.json({ ok: true, submissionId: submission.id });
 });
 
+// Public internships listing (no auth)
+router.get("/public", async (_req: any, res) => {
+  const internships = await prisma.internship.findMany({
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      type: true,
+      xpRequired: true,
+      salary: true,
+      duration: true,
+      location: true,
+      skills: true,
+      description: true,
+      applicants: true,
+      createdAt: true,
+    },
+    take: 2000,
+  });
+  const mapped = internships.map((i) => ({
+    ...i,
+    createdAt: i.createdAt ? i.createdAt.toISOString() : null,
+  }));
+  return res.json({ internships: mapped });
+});
+
 // Admin internship management endpoints
 router.get("/", requireAdmin, async (req: any, res) => {
   const internships = await prisma.internship.findMany({
