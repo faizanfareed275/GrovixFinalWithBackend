@@ -3,6 +3,7 @@ import { Ban, Lock, Snowflake } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiFetch } from "@/lib/api";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -32,6 +33,22 @@ type EnrollmentRow = {
   user: { id: string; name: string; email: string; avatarUrl: string | null; xp: number };
   batch: BatchRow | null;
   certificate: { id: string; certificateCode: string; status: string; issuedAt: string } | null;
+};
+
+type TemplateRow = {
+  id: string;
+  badgeLevel: string;
+  title: string;
+  sortOrder: number;
+};
+
+type AssignEnrollmentResult = {
+  ok: boolean;
+  result: {
+    created: string[];
+    updated: string[];
+    skipped: { templateId: string; reason: string }[];
+  };
 };
 
  const ALL_BATCHES_VALUE = "__all__";
@@ -87,6 +104,21 @@ export default function AdminInternshipV2Enrollments() {
 
   const [nextBatchByEnrollment, setNextBatchByEnrollment] = useState<Record<string, string>>({});
 
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignEnrollment, setAssignEnrollment] = useState<EnrollmentRow | null>(null);
+  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [assignAll, setAssignAll] = useState(false);
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+  const [assignMode, setAssignMode] = useState<"SKIP_EXISTING" | "UPSERT">("SKIP_EXISTING");
+  const [assignSchedule, setAssignSchedule] = useState<"TEMPLATE" | "UNLOCK_NOW" | "CUSTOM">("TEMPLATE");
+  const [assignCustomUnlockDate, setAssignCustomUnlockDate] = useState<string>("");
+  const [assignCustomDeadlineDate, setAssignCustomDeadlineDate] = useState<string>("");
+  const [assignResetAttempts, setAssignResetAttempts] = useState(false);
+  const [assignForce, setAssignForce] = useState(false);
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [assignResult, setAssignResult] = useState<AssignEnrollmentResult | null>(null);
+
   useEffect(() => {
     apiFetch<{ internships: InternshipItem[] }>("/internships")
       .then((d) => {
@@ -108,6 +140,73 @@ export default function AdminInternshipV2Enrollments() {
     } catch (e) {
       console.error("Failed to load batches", e);
       setBatches([]);
+    }
+  };
+
+  const openAssign = async (r: EnrollmentRow) => {
+    setAssignEnrollment(r);
+    setAssignOpen(true);
+    setAssignAll(false);
+    setSelectedTemplateIds([]);
+    setAssignMode("SKIP_EXISTING");
+    setAssignSchedule("TEMPLATE");
+    setAssignCustomUnlockDate("");
+    setAssignCustomDeadlineDate("");
+    setAssignResetAttempts(false);
+    setAssignForce(false);
+    setAssignResult(null);
+    await loadTemplates(internshipId);
+  };
+
+  const submitAssign = async () => {
+    if (!assignEnrollment) return;
+    if (!assignAll && selectedTemplateIds.length === 0) {
+      toast.error("Select at least one template or enable Assign all");
+      return;
+    }
+
+    setAssignSubmitting(true);
+    setAssignResult(null);
+    try {
+      const res = await apiFetch<AssignEnrollmentResult>(
+        `/internships/${encodeURIComponent(String(internshipId))}/admin/v2/enrollments/${encodeURIComponent(String(assignEnrollment.id))}/assignments/assign`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            assignAll,
+            templateIds: selectedTemplateIds,
+            mode: assignMode,
+            schedule: assignSchedule,
+            unlockAt: assignSchedule === "CUSTOM" && assignCustomUnlockDate ? toIsoDateStart(assignCustomUnlockDate) : null,
+            deadlineAt: assignSchedule === "CUSTOM" && assignCustomDeadlineDate ? toIsoDateStart(assignCustomDeadlineDate) : null,
+            resetAttempts: assignMode === "UPSERT" ? assignResetAttempts : false,
+            force: assignForce,
+          }),
+        },
+      );
+      setAssignResult(res);
+      toast.success("Tasks assigned");
+    } catch {
+      toast.error("Assign failed");
+    } finally {
+      setAssignSubmitting(false);
+    }
+  };
+
+  const loadTemplates = async (id: number) => {
+    setTemplatesLoading(true);
+    try {
+      const d = await apiFetch<{ templates: TemplateRow[] }>(`/internships/${encodeURIComponent(String(id))}/admin/v2/templates`);
+      const list = Array.isArray(d?.templates) ? d.templates : [];
+      list.sort((a, b) => {
+        if (String(a.badgeLevel) !== String(b.badgeLevel)) return String(a.badgeLevel).localeCompare(String(b.badgeLevel));
+        return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+      });
+      setTemplates(list);
+    } catch {
+      setTemplates([]);
+    } finally {
+      setTemplatesLoading(false);
     }
   };
 
@@ -344,6 +443,9 @@ export default function AdminInternshipV2Enrollments() {
                     }} title="View assignments">
                       Assignments
                     </Button>
+                    <Button variant="outline" size="sm" onClick={() => void openAssign(r)} title="Assign tasks">
+                      Assign Tasks
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => void syncEnrollment(r.id)} title="Sync enrollment">
                       Sync
                     </Button>
@@ -407,6 +509,162 @@ export default function AdminInternshipV2Enrollments() {
           </div>
         </div>
       )}
+
+      <Dialog open={assignOpen} onOpenChange={(o) => setAssignOpen(o)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Assign Tasks</DialogTitle>
+            <DialogDescription>
+              {assignEnrollment ? (
+                <span>
+                  User: <span className="font-medium">{assignEnrollment.user.name}</span> ({assignEnrollment.user.email})
+                </span>
+              ) : (
+                ""
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={assignAll} onChange={(e) => setAssignAll(e.target.checked)} />
+              Assign all templates
+            </label>
+
+            {!assignAll && (
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-sm font-medium">Templates</div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedTemplateIds(templates.map((t) => String(t.id)))}
+                      disabled={templatesLoading || templates.length === 0}
+                    >
+                      Select all
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds([])}>
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+
+                {templatesLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading templates…</div>
+                ) : templates.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No templates found.</div>
+                ) : (
+                  <div className="max-h-56 overflow-auto space-y-2">
+                    {templates.map((t) => {
+                      const checked = selectedTemplateIds.includes(String(t.id));
+                      return (
+                        <label key={t.id} className="flex items-start gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              setSelectedTemplateIds((p) => {
+                                if (on) return Array.from(new Set([...p, String(t.id)]));
+                                return p.filter((x) => x !== String(t.id));
+                              });
+                            }}
+                          />
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{t.title}</div>
+                            <div className="text-xs text-muted-foreground">{t.badgeLevel}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Selected: <span className="text-foreground">{selectedTemplateIds.length}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <div className="text-sm font-medium">Mode</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignMode === "SKIP_EXISTING"} onChange={() => setAssignMode("SKIP_EXISTING")} />
+                  Skip existing
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignMode === "UPSERT"} onChange={() => setAssignMode("UPSERT")} />
+                  Upsert (update if exists)
+                </label>
+
+                {assignMode === "UPSERT" && (
+                  <div className="pt-1 space-y-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={assignResetAttempts} onChange={(e) => setAssignResetAttempts(e.target.checked)} />
+                      Reset attempts/status
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={assignForce} onChange={(e) => setAssignForce(e.target.checked)} />
+                      Force update (even if attempts exist)
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <div className="text-sm font-medium">Schedule</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "TEMPLATE"} onChange={() => setAssignSchedule("TEMPLATE")} />
+                  Use template offsets
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "UNLOCK_NOW"} onChange={() => setAssignSchedule("UNLOCK_NOW")} />
+                  Unlock now
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "CUSTOM"} onChange={() => setAssignSchedule("CUSTOM")} />
+                  Custom dates
+                </label>
+
+                {assignSchedule === "CUSTOM" && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2">
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Unlock date (optional)</div>
+                      <Input type="date" value={assignCustomUnlockDate} onChange={(e) => setAssignCustomUnlockDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Deadline date (optional)</div>
+                      <Input type="date" value={assignCustomDeadlineDate} onChange={(e) => setAssignCustomDeadlineDate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {assignResult?.result && (
+              <div className="rounded-lg border border-border p-3 space-y-1">
+                <div className="text-sm font-medium">Result</div>
+                <div className="text-xs text-muted-foreground">
+                  Created: <span className="text-foreground">{Array.isArray(assignResult.result.created) ? assignResult.result.created.length : 0}</span>
+                  {" "}· Updated: <span className="text-foreground">{Array.isArray(assignResult.result.updated) ? assignResult.result.updated.length : 0}</span>
+                  {" "}· Skipped: <span className="text-foreground">{Array.isArray(assignResult.result.skipped) ? assignResult.result.skipped.length : 0}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>
+              Close
+            </Button>
+            <Button variant="neon" onClick={() => void submitAssign()} disabled={assignSubmitting || !assignEnrollment}>
+              {assignSubmitting ? "Assigning…" : "Assign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

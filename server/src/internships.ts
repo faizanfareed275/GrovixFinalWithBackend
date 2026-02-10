@@ -2302,6 +2302,312 @@ router.post("/:id/admin/enrollments/:enrollmentId/freeze", requireAdmin, async (
   return res.json({ ok: true, enrollment: updated });
 });
 
+async function assignV2TemplatesToEnrollment(params: {
+  tx: any;
+  internshipId: number;
+  enrollmentId: string;
+  templateIds: string[];
+  mode: "SKIP_EXISTING" | "UPSERT";
+  schedule: "TEMPLATE" | "UNLOCK_NOW" | "CUSTOM";
+  unlockAt: Date | null;
+  deadlineAt: Date | null;
+  resetAttempts: boolean;
+  force: boolean;
+  actor: string | null;
+}) {
+  const enrollment = await params.tx.internshipEnrollment.findUnique({ where: { id: params.enrollmentId } });
+  if (!enrollment) return { error: "enrollment_not_found" };
+  if (enrollment.internshipId !== params.internshipId) return { error: "invalid_internship" };
+
+  const tpls = await params.tx.internshipTaskTemplate.findMany({
+    where: { internshipId: params.internshipId, id: { in: params.templateIds } },
+    select: { id: true, unlockOffsetDays: true, timePeriodDays: true, maxAttempts: true },
+    take: 2000,
+  });
+  const tplById = new Map<string, any>(tpls.map((t: any) => [String(t.id), t]));
+
+  const created: string[] = [];
+  const updated: string[] = [];
+  const skipped: any[] = [];
+
+  const uniqTemplateIds = Array.from(new Set(params.templateIds.map((x) => String(x || "").trim()).filter(Boolean)));
+  for (const templateId of uniqTemplateIds) {
+    const tpl = tplById.get(templateId);
+    if (!tpl) {
+      skipped.push({ templateId, reason: "template_not_found" });
+      continue;
+    }
+
+    const existing = await params.tx.internshipTaskAssignment.findUnique({
+      where: { enrollmentId_templateId: { enrollmentId: params.enrollmentId, templateId } },
+      include: { attempts: { select: { id: true }, take: 1 } },
+    });
+
+    if (existing) {
+      if (params.mode === "SKIP_EXISTING") {
+        skipped.push({ templateId, reason: "already_exists" });
+        continue;
+      }
+
+      const hasAttempts = !!(existing.attempts && existing.attempts.length > 0);
+      if (hasAttempts && !params.force) {
+        skipped.push({ templateId, reason: "has_attempts" });
+        continue;
+      }
+
+      const start = enrollment.startDate instanceof Date ? enrollment.startDate : new Date(enrollment.startDate as any);
+      const now = new Date();
+      const computed = (() => {
+        if (params.schedule === "CUSTOM") return { unlockAt: params.unlockAt, deadlineAt: params.deadlineAt };
+        if (params.schedule === "UNLOCK_NOW") {
+          const unlockAt = now;
+          const periodDays = tpl.timePeriodDays === null || tpl.timePeriodDays === undefined ? null : Number(tpl.timePeriodDays);
+          const deadlineAt = periodDays !== null && Number.isFinite(periodDays)
+            ? new Date(unlockAt.getTime() + periodDays * 24 * 60 * 60 * 1000)
+            : null;
+          return { unlockAt, deadlineAt };
+        }
+        return computeUnlockDeadline(start, tpl || {});
+      })();
+
+      const nextMaxAttempts = Math.max(1, Number(tpl.maxAttempts || 1) || 1);
+      const patch: any = {
+        unlockAt: computed.unlockAt,
+        deadlineAt: computed.deadlineAt,
+      };
+
+      if (params.resetAttempts && (params.force || !hasAttempts)) {
+        patch.status = "ASSIGNED" as any;
+        patch.lockedAt = null;
+        patch.passedAt = null;
+        patch.latestGradeStatus = "PENDING" as any;
+        patch.maxAttempts = nextMaxAttempts;
+        patch.remainingAttempts = nextMaxAttempts;
+      }
+
+      await params.tx.internshipTaskAssignment.update({ where: { id: existing.id }, data: patch });
+      updated.push(templateId);
+      continue;
+    }
+
+    const start = enrollment.startDate instanceof Date ? enrollment.startDate : new Date(enrollment.startDate as any);
+    const now = new Date();
+    const computed = (() => {
+      if (params.schedule === "CUSTOM") return { unlockAt: params.unlockAt, deadlineAt: params.deadlineAt };
+      if (params.schedule === "UNLOCK_NOW") {
+        const unlockAt = now;
+        const periodDays = tpl.timePeriodDays === null || tpl.timePeriodDays === undefined ? null : Number(tpl.timePeriodDays);
+        const deadlineAt = periodDays !== null && Number.isFinite(periodDays)
+          ? new Date(unlockAt.getTime() + periodDays * 24 * 60 * 60 * 1000)
+          : null;
+        return { unlockAt, deadlineAt };
+      }
+      return computeUnlockDeadline(start, tpl || {});
+    })();
+
+    const nextMaxAttempts = Math.max(1, Number(tpl.maxAttempts || 1) || 1);
+
+    await params.tx.internshipTaskAssignment.create({
+      data: {
+        enrollmentId: params.enrollmentId,
+        templateId,
+        status: "ASSIGNED" as any,
+        unlockAt: computed.unlockAt,
+        deadlineAt: computed.deadlineAt,
+        maxAttempts: nextMaxAttempts,
+        remainingAttempts: nextMaxAttempts,
+      } as any,
+    });
+    created.push(templateId);
+  }
+
+  if (params.actor) {
+    await params.tx.auditLog.create({
+      data: {
+        actorUserId: params.actor,
+        action: "INTERNSHIP_ASSIGNMENTS_ASSIGN_ENROLLMENT",
+        entityType: "InternshipEnrollment",
+        entityId: params.enrollmentId,
+        before: { internshipId: params.internshipId, enrollmentId: params.enrollmentId },
+        after: { created, updated, skipped, templateIds: uniqTemplateIds, schedule: params.schedule, mode: params.mode } as any,
+      },
+    });
+  }
+
+  return { created, updated, skipped };
+}
+
+router.post("/:id/admin/v2/enrollments/:enrollmentId/assignments/assign", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const enrollmentId = String(req.params.enrollmentId || "");
+  if (!Number.isFinite(internshipId) || !enrollmentId) return res.status(400).json({ error: "invalid_request" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const assignAll = !!req.body?.assignAll;
+  const templateIdsRaw = Array.isArray(req.body?.templateIds) ? req.body.templateIds : [];
+
+  const mode = String(req.body?.mode || "SKIP_EXISTING").toUpperCase();
+  const schedule = String(req.body?.schedule || "TEMPLATE").toUpperCase();
+  const resetAttempts = !!req.body?.resetAttempts;
+  const force = !!req.body?.force;
+
+  const allowedMode = ["SKIP_EXISTING", "UPSERT"];
+  const allowedSchedule = ["TEMPLATE", "UNLOCK_NOW", "CUSTOM"];
+  if (!allowedMode.includes(mode)) return res.status(400).json({ error: "invalid_mode" });
+  if (!allowedSchedule.includes(schedule)) return res.status(400).json({ error: "invalid_schedule" });
+
+  const customUnlockAt = req.body?.unlockAt ? new Date(req.body.unlockAt) : null;
+  const customDeadlineAt = req.body?.deadlineAt ? new Date(req.body.deadlineAt) : null;
+  if (schedule === "CUSTOM") {
+    if (customUnlockAt && !Number.isFinite(customUnlockAt.getTime())) return res.status(400).json({ error: "invalid_unlockAt" });
+    if (customDeadlineAt && !Number.isFinite(customDeadlineAt.getTime())) return res.status(400).json({ error: "invalid_deadlineAt" });
+  }
+
+  const templateIds: string[] = assignAll
+    ? (await prisma.internshipTaskTemplate.findMany({ where: { internshipId }, select: { id: true }, take: 2000 })).map((t: any) => String(t.id))
+    : Array.from(new Set(templateIdsRaw.map((x: any) => String(x || "").trim()).filter(Boolean)));
+
+  if (!templateIds.length) return res.status(400).json({ error: "missing_templates" });
+
+  const result = await prisma.$transaction(async (tx) => {
+    return assignV2TemplatesToEnrollment({
+      tx,
+      internshipId,
+      enrollmentId,
+      templateIds,
+      mode: mode as any,
+      schedule: schedule as any,
+      unlockAt: schedule === "CUSTOM" ? customUnlockAt : null,
+      deadlineAt: schedule === "CUSTOM" ? customDeadlineAt : null,
+      resetAttempts,
+      force,
+      actor,
+    });
+  });
+
+  if ((result as any)?.error) return res.status(404).json({ error: (result as any).error });
+
+  seedAssignmentsForEnrollment(enrollmentId).catch(() => {});
+  if (schedule === "TEMPLATE") recomputeAssignmentScheduleForEnrollment(enrollmentId).catch(() => {});
+  enforceV2ProgressionForEnrollment(enrollmentId).catch(() => {});
+
+  return res.json({ ok: true, result });
+});
+
+router.post("/:id/admin/v2/batches/:batchId/assignments/assign", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const batchId = Number(req.params.batchId);
+  if (!Number.isFinite(internshipId) || !Number.isFinite(batchId)) return res.status(400).json({ error: "invalid_request" });
+
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: batchId } });
+  if (!batch || batch.internshipId !== internshipId) return res.status(404).json({ error: "batch_not_found" });
+
+  const actor = req.auth?.userId ? String(req.auth.userId) : null;
+
+  const assignAll = !!req.body?.assignAll;
+  const templateIdsRaw = Array.isArray(req.body?.templateIds) ? req.body.templateIds : [];
+
+  const mode = String(req.body?.mode || "SKIP_EXISTING").toUpperCase();
+  const schedule = String(req.body?.schedule || "TEMPLATE").toUpperCase();
+  const resetAttempts = !!req.body?.resetAttempts;
+  const force = !!req.body?.force;
+
+  const allowedMode = ["SKIP_EXISTING", "UPSERT"];
+  const allowedSchedule = ["TEMPLATE", "UNLOCK_NOW", "CUSTOM"];
+  if (!allowedMode.includes(mode)) return res.status(400).json({ error: "invalid_mode" });
+  if (!allowedSchedule.includes(schedule)) return res.status(400).json({ error: "invalid_schedule" });
+
+  const customUnlockAt = req.body?.unlockAt ? new Date(req.body.unlockAt) : null;
+  const customDeadlineAt = req.body?.deadlineAt ? new Date(req.body.deadlineAt) : null;
+  if (schedule === "CUSTOM") {
+    if (customUnlockAt && !Number.isFinite(customUnlockAt.getTime())) return res.status(400).json({ error: "invalid_unlockAt" });
+    if (customDeadlineAt && !Number.isFinite(customDeadlineAt.getTime())) return res.status(400).json({ error: "invalid_deadlineAt" });
+  }
+
+  const templateIds: string[] = assignAll
+    ? (await prisma.internshipTaskTemplate.findMany({ where: { internshipId }, select: { id: true }, take: 2000 })).map((t: any) => String(t.id))
+    : Array.from(new Set(templateIdsRaw.map((x: any) => String(x || "").trim()).filter(Boolean)));
+  if (!templateIds.length) return res.status(400).json({ error: "missing_templates" });
+
+  const includeStatusesRaw = Array.isArray(req.body?.includeStatuses) ? req.body.includeStatuses : ["ACTIVE"];
+  const includeStatuses = includeStatusesRaw
+    .map((s: any) => String(s || "").toUpperCase())
+    .filter(Boolean);
+
+  const enrollments = await prisma.internshipEnrollment.findMany({
+    where: {
+      internshipId,
+      batchId,
+      ...(includeStatuses.length ? { status: { in: includeStatuses as any } } : {}),
+    } as any,
+    select: { id: true },
+    take: 2000,
+  });
+  if (!enrollments.length) return res.json({ ok: true, result: { enrollments: [], totals: { created: 0, updated: 0, skipped: 0 } } });
+
+  const out = await prisma.$transaction(async (tx) => {
+    const perEnrollment: any[] = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    for (const e of enrollments) {
+      const r: any = await assignV2TemplatesToEnrollment({
+        tx,
+        internshipId,
+        enrollmentId: String(e.id),
+        templateIds,
+        mode: mode as any,
+        schedule: schedule as any,
+        unlockAt: schedule === "CUSTOM" ? customUnlockAt : null,
+        deadlineAt: schedule === "CUSTOM" ? customDeadlineAt : null,
+        resetAttempts,
+        force,
+        actor,
+      });
+      if (r?.error) {
+        perEnrollment.push({ enrollmentId: String(e.id), error: r.error });
+        continue;
+      }
+      createdCount += Array.isArray(r.created) ? r.created.length : 0;
+      updatedCount += Array.isArray(r.updated) ? r.updated.length : 0;
+      skippedCount += Array.isArray(r.skipped) ? r.skipped.length : 0;
+      perEnrollment.push({ enrollmentId: String(e.id), ...r });
+    }
+
+    if (actor) {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actor,
+          action: "INTERNSHIP_ASSIGNMENTS_ASSIGN_BATCH",
+          entityType: "InternshipBatch",
+          entityId: String(batchId),
+          before: { internshipId, batchId },
+          after: {
+            templateIds,
+            schedule,
+            mode,
+            includeStatuses,
+            totals: { created: createdCount, updated: updatedCount, skipped: skippedCount },
+          } as any,
+        },
+      });
+    }
+
+    return { enrollments: perEnrollment, totals: { created: createdCount, updated: updatedCount, skipped: skippedCount } };
+  });
+
+  for (const e of enrollments) {
+    const id = String(e.id);
+    seedAssignmentsForEnrollment(id).catch(() => {});
+    if (schedule === "TEMPLATE") recomputeAssignmentScheduleForEnrollment(id).catch(() => {});
+    enforceV2ProgressionForEnrollment(id).catch(() => {});
+  }
+
+  return res.json({ ok: true, result: out });
+});
+
 router.post("/:id/admin/enrollments/:enrollmentId/sync", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   const enrollmentId = String(req.params.enrollmentId || "");

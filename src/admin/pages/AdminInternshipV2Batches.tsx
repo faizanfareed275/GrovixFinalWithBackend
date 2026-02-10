@@ -48,6 +48,21 @@ type BulkImportResult = {
   applicantsDelta: number;
 };
 
+type TemplateRow = {
+  id: string;
+  badgeLevel: string;
+  title: string;
+  sortOrder: number;
+};
+
+type AssignBatchResult = {
+  ok: boolean;
+  result: {
+    enrollments: any[];
+    totals: { created: number; updated: number; skipped: number };
+  };
+};
+
 function toIsoDateStart(dateStr: string) {
   const d = new Date(`${dateStr}T00:00:00.000Z`);
   return d.toISOString();
@@ -65,6 +80,24 @@ export default function AdminInternshipV2Batches() {
   const [bulkReturnPasswords, setBulkReturnPasswords] = useState(true);
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [bulkResult, setBulkResult] = useState<BulkImportResult | null>(null);
+
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignBatch, setAssignBatch] = useState<BatchRow | null>(null);
+  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [assignAll, setAssignAll] = useState(false);
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+  const [assignMode, setAssignMode] = useState<"SKIP_EXISTING" | "UPSERT">("SKIP_EXISTING");
+  const [assignSchedule, setAssignSchedule] = useState<"TEMPLATE" | "UNLOCK_NOW" | "CUSTOM">("TEMPLATE");
+  const [assignCustomUnlockDate, setAssignCustomUnlockDate] = useState<string>("");
+  const [assignCustomDeadlineDate, setAssignCustomDeadlineDate] = useState<string>("");
+  const [assignResetAttempts, setAssignResetAttempts] = useState(false);
+  const [assignForce, setAssignForce] = useState(false);
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [assignResult, setAssignResult] = useState<AssignBatchResult | null>(null);
+  const [includeActive, setIncludeActive] = useState(true);
+  const [includeFrozen, setIncludeFrozen] = useState(false);
+  const [includeCompleted, setIncludeCompleted] = useState(false);
 
   const [form, setForm] = useState({
     name: "",
@@ -102,6 +135,23 @@ export default function AdminInternshipV2Batches() {
     if (!internshipId) return;
     loadBatches(internshipId).catch(() => {});
   }, [internshipId]);
+
+  const loadTemplates = async (id: number) => {
+    setTemplatesLoading(true);
+    try {
+      const d = await apiFetch<{ templates: TemplateRow[] }>(`/internships/${encodeURIComponent(String(id))}/admin/v2/templates`);
+      const list = Array.isArray(d?.templates) ? d.templates : [];
+      list.sort((a, b) => {
+        if (String(a.badgeLevel) !== String(b.badgeLevel)) return String(a.badgeLevel).localeCompare(String(b.badgeLevel));
+        return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+      });
+      setTemplates(list);
+    } catch {
+      setTemplates([]);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  };
 
   const parseBulkApplicants = (text: string): { applicants: BulkApplicantInput[]; skipped: number } => {
     const raw = String(text || "").trim();
@@ -183,6 +233,65 @@ export default function AdminInternshipV2Batches() {
     setBulkSubmitting(false);
     setBulkResult(null);
     setBulkOpen(true);
+  };
+
+  const openAssign = async (b: BatchRow) => {
+    setAssignBatch(b);
+    setAssignOpen(true);
+    setAssignAll(false);
+    setSelectedTemplateIds([]);
+    setAssignMode("SKIP_EXISTING");
+    setAssignSchedule("TEMPLATE");
+    setAssignCustomUnlockDate("");
+    setAssignCustomDeadlineDate("");
+    setAssignResetAttempts(false);
+    setAssignForce(false);
+    setAssignResult(null);
+    setIncludeActive(true);
+    setIncludeFrozen(false);
+    setIncludeCompleted(false);
+    await loadTemplates(internshipId);
+  };
+
+  const submitAssign = async () => {
+    if (!assignBatch) return;
+    if (!assignAll && selectedTemplateIds.length === 0) {
+      toast.error("Select at least one template or enable Assign all");
+      return;
+    }
+
+    const includeStatuses: string[] = [];
+    if (includeActive) includeStatuses.push("ACTIVE");
+    if (includeFrozen) includeStatuses.push("FROZEN");
+    if (includeCompleted) includeStatuses.push("COMPLETED");
+
+    setAssignSubmitting(true);
+    setAssignResult(null);
+    try {
+      const res = await apiFetch<AssignBatchResult>(
+        `/internships/${encodeURIComponent(String(internshipId))}/admin/v2/batches/${encodeURIComponent(String(assignBatch.id))}/assignments/assign`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            assignAll,
+            templateIds: selectedTemplateIds,
+            mode: assignMode,
+            schedule: assignSchedule,
+            unlockAt: assignSchedule === "CUSTOM" && assignCustomUnlockDate ? toIsoDateStart(assignCustomUnlockDate) : null,
+            deadlineAt: assignSchedule === "CUSTOM" && assignCustomDeadlineDate ? toIsoDateStart(assignCustomDeadlineDate) : null,
+            resetAttempts: assignMode === "UPSERT" ? assignResetAttempts : false,
+            force: assignForce,
+            includeStatuses: includeStatuses.length ? includeStatuses : ["ACTIVE"],
+          }),
+        },
+      );
+      setAssignResult(res);
+      toast.success("Tasks assigned");
+    } catch {
+      toast.error("Assign failed");
+    } finally {
+      setAssignSubmitting(false);
+    }
   };
 
   const submitBulk = async () => {
@@ -339,15 +448,197 @@ export default function AdminInternshipV2Batches() {
                   <br />
                   Close: {b.applicationCloseAt ? new Date(b.applicationCloseAt).toLocaleDateString() : "—"}
                 </div>
-                <Button variant="outline" onClick={() => openBulk(b)}>
-                  Bulk Import
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => void openAssign(b)}>
+                    Assign Tasks
+                  </Button>
+                  <Button variant="outline" onClick={() => openBulk(b)}>
+                    Bulk Import
+                  </Button>
+                </div>
               </div>
             </div>
           ))}
           {batches.length === 0 && <div className="p-8 text-center text-muted-foreground">No batches found.</div>}
         </div>
       </div>
+
+      <Dialog open={assignOpen} onOpenChange={(o) => setAssignOpen(o)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Assign Tasks (Batch)</DialogTitle>
+            <DialogDescription>
+              {assignBatch ? (
+                <span>
+                  Batch: <span className="font-medium">{assignBatch.name}</span> ({assignBatch.batchCode})
+                </span>
+              ) : (
+                ""
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={assignAll} onChange={(e) => setAssignAll(e.target.checked)} />
+              Assign all templates
+            </label>
+
+            {!assignAll && (
+              <div className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-sm font-medium">Templates</div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedTemplateIds(templates.map((t) => String(t.id)))}
+                      disabled={templatesLoading || templates.length === 0}
+                    >
+                      Select all
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds([])}>
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+
+                {templatesLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading templates…</div>
+                ) : templates.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No templates found.</div>
+                ) : (
+                  <div className="max-h-56 overflow-auto space-y-2">
+                    {templates.map((t) => {
+                      const checked = selectedTemplateIds.includes(String(t.id));
+                      return (
+                        <label key={t.id} className="flex items-start gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              setSelectedTemplateIds((p) => {
+                                if (on) return Array.from(new Set([...p, String(t.id)]));
+                                return p.filter((x) => x !== String(t.id));
+                              });
+                            }}
+                          />
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{t.title}</div>
+                            <div className="text-xs text-muted-foreground">{t.badgeLevel}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Selected: <span className="text-foreground">{selectedTemplateIds.length}</span>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <div className="text-sm font-medium">Mode</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignMode === "SKIP_EXISTING"} onChange={() => setAssignMode("SKIP_EXISTING")} />
+                  Skip existing
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignMode === "UPSERT"} onChange={() => setAssignMode("UPSERT")} />
+                  Upsert (update if exists)
+                </label>
+
+                {assignMode === "UPSERT" && (
+                  <div className="pt-1 space-y-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={assignResetAttempts} onChange={(e) => setAssignResetAttempts(e.target.checked)} />
+                      Reset attempts/status
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={assignForce} onChange={(e) => setAssignForce(e.target.checked)} />
+                      Force update (even if attempts exist)
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-border p-3 space-y-2">
+                <div className="text-sm font-medium">Schedule</div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "TEMPLATE"} onChange={() => setAssignSchedule("TEMPLATE")} />
+                  Use template offsets
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "UNLOCK_NOW"} onChange={() => setAssignSchedule("UNLOCK_NOW")} />
+                  Unlock now
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" checked={assignSchedule === "CUSTOM"} onChange={() => setAssignSchedule("CUSTOM")} />
+                  Custom dates
+                </label>
+
+                {assignSchedule === "CUSTOM" && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2">
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Unlock date (optional)</div>
+                      <Input type="date" value={assignCustomUnlockDate} onChange={(e) => setAssignCustomUnlockDate(e.target.value)} />
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Deadline date (optional)</div>
+                      <Input type="date" value={assignCustomDeadlineDate} onChange={(e) => setAssignCustomDeadlineDate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <div className="text-sm font-medium">Apply to enrollments</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeActive} onChange={(e) => setIncludeActive(e.target.checked)} />
+                  ACTIVE
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeFrozen} onChange={(e) => setIncludeFrozen(e.target.checked)} />
+                  FROZEN
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeCompleted} onChange={(e) => setIncludeCompleted(e.target.checked)} />
+                  COMPLETED
+                </label>
+              </div>
+            </div>
+
+            {assignResult?.result?.totals && (
+              <div className="rounded-lg border border-border p-3 space-y-1">
+                <div className="text-sm font-medium">Result</div>
+                <div className="text-xs text-muted-foreground">
+                  Enrollments processed: <span className="text-foreground">{Array.isArray(assignResult.result.enrollments) ? assignResult.result.enrollments.length : 0}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Created: <span className="text-foreground">{assignResult.result.totals.created}</span>
+                  {" "}· Updated: <span className="text-foreground">{assignResult.result.totals.updated}</span>
+                  {" "}· Skipped: <span className="text-foreground">{assignResult.result.totals.skipped}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>
+              Close
+            </Button>
+            <Button variant="neon" onClick={() => void submitAssign()} disabled={assignSubmitting || !assignBatch}>
+              {assignSubmitting ? "Assigning…" : "Assign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={bulkOpen} onOpenChange={(o) => setBulkOpen(o)}>
         <DialogContent className="max-w-2xl">
