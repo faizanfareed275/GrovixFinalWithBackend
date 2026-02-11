@@ -18,17 +18,17 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 122 39% 49%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 142 70% 45%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
+    --secondary: 210 20% 90%;
     --secondary-foreground: 222.2 47.4% 11.2%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 142 70% 40%;
+    --accent-foreground: 0 0% 100%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 210 20% 90%;
+    --muted-foreground: 215.4 25% 40%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
@@ -77,17 +77,17 @@
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 122 39% 49%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 142 70% 55%;
+    --primary-foreground: 222.2 84% 4.9%;
 
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 142 70% 50%;
+    --accent-foreground: 222.2 84% 4.9%;
 
     --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted-foreground: 215 20.2% 75%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
@@ -140,9 +140,9 @@
     @apply font-display font-bold tracking-tight;
   }
   /* Default icon color (Lucide) as brand primary when no explicit text-* class present */
-  .lucide:not([class*="text-"]) { color: hsl(var(--primary)); }
+  .lucide:not([class*="text-"]) { color: currentColor; }
   /* Ensure icons inside primary buttons follow foreground (white) */
-  .bg-primary .lucide, .text-primary-foreground .lucide { color: hsl(var(--primary-foreground)); }
+  .bg-primary .lucide, .text-primary-foreground .lucide { color: inherit; }
 }
 
 @layer components {
@@ -180,8 +180,8 @@
 
   .xp-bar-fill {
     @apply h-full rounded-full transition-all duration-1000 ease-out;
-    background: linear-gradient(90deg, hsl(var(--neon-blue)), hsl(var(--neon-purple)));
-    box-shadow: 0 0 8px hsl(var(--neon-blue) / 0.35);
+    background: hsl(var(--primary));
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.2);
   }
 
   /* Animated Border */

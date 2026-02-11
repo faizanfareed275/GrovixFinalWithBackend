@@ -3108,6 +3108,8 @@ router.get("/public", async (_req: any, res) => {
       skills: true,
       description: true,
       applicants: true,
+      imageUrl: true,
+      imageFileId: true,
       createdAt: true,
     },
     take: 2000,
@@ -3117,6 +3119,40 @@ router.get("/public", async (_req: any, res) => {
     createdAt: i.createdAt ? i.createdAt.toISOString() : null,
   }));
   return res.json({ internships: mapped });
+});
+
+router.get("/public/:id", async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+
+  const internship = await prisma.internship.findUnique({
+    where: { id: internshipId },
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      type: true,
+      xpRequired: true,
+      salary: true,
+      duration: true,
+      location: true,
+      skills: true,
+      description: true,
+      applicants: true,
+      imageUrl: true,
+      imageFileId: true,
+      createdAt: true,
+    },
+  });
+
+  if (!internship) return res.status(404).json({ error: "not_found" });
+
+  return res.json({
+    internship: {
+      ...internship,
+      createdAt: internship.createdAt ? internship.createdAt.toISOString() : null,
+    },
+  });
 });
 
 // Admin internship management endpoints
@@ -3130,6 +3166,8 @@ router.get("/", requireAdmin, async (req: any, res) => {
       type: true,
       createdAt: true,
       description: true,
+      imageUrl: true,
+      imageFileId: true,
     },
   });
   const mapped = internships.map((i) => ({
@@ -3140,7 +3178,7 @@ router.get("/", requireAdmin, async (req: any, res) => {
 });
 
 router.post("/", requireAdmin, async (req: any, res) => {
-  const { title, company, type, description } = req.body || {};
+  const { title, company, type, description, imageUrl, imageFileId } = req.body || {};
   if (!title || !company || !description) {
     return res.status(400).json({ error: "title_company_description_required" });
   }
@@ -3154,6 +3192,8 @@ router.post("/", requireAdmin, async (req: any, res) => {
       duration: "Flexible",
       location: "Remote",
       skills: [],
+      imageUrl: imageUrl ? String(imageUrl) : null,
+      imageFileId: imageFileId ? String(imageFileId) : null,
     },
     select: {
       id: true,
@@ -3163,6 +3203,8 @@ router.post("/", requireAdmin, async (req: any, res) => {
       createdAt: true,
       description: true,
       internshipCode: true,
+      imageUrl: true,
+      imageFileId: true,
     },
   });
   const code = await ensureInternshipCode(internship.id);
@@ -3174,6 +3216,82 @@ router.post("/", requireAdmin, async (req: any, res) => {
   return res.json({ internship: mapped });
 });
 
+router.put("/:id", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
+
+  const existing = await prisma.internship.findUnique({ where: { id: internshipId } });
+  if (!existing) return res.status(404).json({ error: "not_found" });
+
+  const patch: any = {};
+
+  if (req.body?.title !== undefined) patch.title = String(req.body.title || "").trim();
+  if (req.body?.company !== undefined) patch.company = String(req.body.company || "").trim();
+  if (req.body?.type !== undefined) {
+    const t = String(req.body.type || "").toLowerCase();
+    if (t !== "free" && t !== "paid") return res.status(400).json({ error: "invalid_type" });
+    patch.type = t;
+  }
+  if (req.body?.xpRequired !== undefined) patch.xpRequired = Math.max(0, Number(req.body.xpRequired || 0) || 0);
+  if (req.body?.salary !== undefined) {
+    const s = req.body.salary === null ? null : String(req.body.salary || "").trim();
+    patch.salary = s ? s : null;
+  }
+  if (req.body?.duration !== undefined) patch.duration = String(req.body.duration || "").trim();
+  if (req.body?.location !== undefined) patch.location = String(req.body.location || "").trim();
+  if (req.body?.skills !== undefined) {
+    const raw = Array.isArray(req.body.skills) ? req.body.skills : [];
+    patch.skills = raw.map((s: any) => String(s || "").trim()).filter(Boolean);
+  }
+  if (req.body?.description !== undefined) patch.description = String(req.body.description || "");
+
+  if (req.body?.imageUrl !== undefined) {
+    const url = req.body.imageUrl === null ? null : String(req.body.imageUrl || "").trim();
+    patch.imageUrl = url ? url : null;
+  }
+  if (req.body?.imageFileId !== undefined) {
+    const fid = req.body.imageFileId === null ? null : String(req.body.imageFileId || "").trim();
+    patch.imageFileId = fid ? fid : null;
+  }
+
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no_changes" });
+  if (patch.title !== undefined && !patch.title) return res.status(400).json({ error: "title_required" });
+  if (patch.company !== undefined && !patch.company) return res.status(400).json({ error: "company_required" });
+  if (patch.duration !== undefined && !patch.duration) return res.status(400).json({ error: "duration_required" });
+  if (patch.location !== undefined && !patch.location) return res.status(400).json({ error: "location_required" });
+  if (patch.description !== undefined && !String(patch.description || "").trim()) return res.status(400).json({ error: "description_required" });
+
+  const updated = await prisma.internship.update({
+    where: { id: internshipId },
+    data: patch,
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      type: true,
+      xpRequired: true,
+      salary: true,
+      duration: true,
+      location: true,
+      skills: true,
+      description: true,
+      applicants: true,
+      imageUrl: true,
+      imageFileId: true,
+      internshipCode: true,
+      createdAt: true,
+    },
+  });
+
+  return res.json({
+    ok: true,
+    internship: {
+      ...updated,
+      createdAt: updated.createdAt ? updated.createdAt.toISOString() : null,
+    },
+  });
+});
+
 router.delete("/:id", requireAdmin, async (req: any, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid_id" });
@@ -3182,7 +3300,7 @@ router.delete("/:id", requireAdmin, async (req: any, res) => {
 });
 
 // Batches management
-router.get("/:id/batches", requireAdmin, async (req: any, res) => {
+router.get("/:id/admin/batches/overview", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
   const batches = await prisma.internshipBatch.findMany({
@@ -3205,7 +3323,7 @@ router.get("/:id/batches", requireAdmin, async (req: any, res) => {
   return res.json({ batches: mapped });
 });
 
-router.post("/:id/batches", requireAdmin, async (req: any, res) => {
+router.post("/:id/admin/batches", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
   const { name, startDate, endDate, applicationOpenAt, applicationCloseAt, capacity } = req.body || {};
@@ -3238,8 +3356,79 @@ router.post("/:id/batches", requireAdmin, async (req: any, res) => {
   return res.json({ batch: mapped });
 });
 
+router.put("/:id/admin/batches/:batchId", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const batchId = Number(req.params.batchId);
+  if (!Number.isFinite(internshipId) || !Number.isFinite(batchId)) return res.status(400).json({ error: "invalid_request" });
+
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: batchId } });
+  if (!batch || batch.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const patch: any = {};
+  if (req.body?.name !== undefined) patch.name = String(req.body.name || "").trim();
+  if (req.body?.startDate !== undefined) patch.startDate = req.body.startDate ? new Date(req.body.startDate) : null;
+  if (req.body?.endDate !== undefined) patch.endDate = req.body.endDate ? new Date(req.body.endDate) : null;
+  if (req.body?.capacity !== undefined) {
+    const c = req.body.capacity === null || req.body.capacity === "" ? null : Number(req.body.capacity);
+    if (c !== null && !Number.isFinite(c)) return res.status(400).json({ error: "invalid_capacity" });
+    patch.capacity = c;
+  }
+  if (req.body?.applicationOpenAt !== undefined) {
+    patch.applicationOpenAt = req.body.applicationOpenAt ? new Date(req.body.applicationOpenAt) : null;
+  }
+  if (req.body?.applicationCloseAt !== undefined) {
+    patch.applicationCloseAt = req.body.applicationCloseAt ? new Date(req.body.applicationCloseAt) : null;
+  }
+  if (req.body?.status !== undefined) {
+    const st = String(req.body.status || "").toUpperCase();
+    const allowed = ["DRAFT", "OPEN", "CLOSED", "RUNNING", "ENDED"];
+    if (!allowed.includes(st)) return res.status(400).json({ error: "invalid_status" });
+    patch.status = st;
+  }
+
+  if (Object.keys(patch).length === 0) return res.status(400).json({ error: "no_changes" });
+  if (patch.name !== undefined && !patch.name) return res.status(400).json({ error: "name_required" });
+  if (patch.startDate && !Number.isFinite(patch.startDate.getTime())) return res.status(400).json({ error: "invalid_startDate" });
+  if (patch.endDate && !Number.isFinite(patch.endDate.getTime())) return res.status(400).json({ error: "invalid_endDate" });
+  if (patch.applicationOpenAt && !Number.isFinite(patch.applicationOpenAt.getTime())) return res.status(400).json({ error: "invalid_applicationOpenAt" });
+  if (patch.applicationCloseAt && !Number.isFinite(patch.applicationCloseAt.getTime())) return res.status(400).json({ error: "invalid_applicationCloseAt" });
+
+  const updated = await prisma.internshipBatch.update({
+    where: { id: batchId },
+    data: patch,
+  });
+
+  return res.json({
+    ok: true,
+    batch: {
+      ...updated,
+      createdAt: updated.createdAt.toISOString(),
+      startDate: updated.startDate.toISOString(),
+      endDate: updated.endDate.toISOString(),
+      applicationOpenAt: updated.applicationOpenAt?.toISOString() || null,
+      applicationCloseAt: updated.applicationCloseAt?.toISOString() || null,
+    },
+  });
+});
+
+router.delete("/:id/admin/batches/:batchId", requireAdmin, async (req: any, res) => {
+  const internshipId = Number(req.params.id);
+  const batchId = Number(req.params.batchId);
+  if (!Number.isFinite(internshipId) || !Number.isFinite(batchId)) return res.status(400).json({ error: "invalid_request" });
+
+  const batch = await prisma.internshipBatch.findUnique({ where: { id: batchId } });
+  if (!batch || batch.internshipId !== internshipId) return res.status(404).json({ error: "not_found" });
+
+  const apps = await prisma.internshipApplication.count({ where: { batchId } });
+  const enrollments = await prisma.internshipEnrollment.count({ where: { batchId } });
+  if (apps > 0 || enrollments > 0) return res.status(409).json({ error: "batch_not_empty" });
+
+  await prisma.internshipBatch.delete({ where: { id: batchId } });
+  return res.json({ ok: true });
+});
+
 // Applications management
-router.get("/:id/applications", requireAdmin, async (req: any, res) => {
+router.get("/:id/admin/applications/overview", requireAdmin, async (req: any, res) => {
   const internshipId = Number(req.params.id);
   if (!Number.isFinite(internshipId)) return res.status(400).json({ error: "invalid_id" });
   const applications = await prisma.internshipApplication.findMany({

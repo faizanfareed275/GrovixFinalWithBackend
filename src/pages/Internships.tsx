@@ -102,6 +102,18 @@ export default function Internships() {
     setShowCertificate(true);
   };
 
+  const apiUrl = typeof window !== "undefined"
+    ? ((import.meta as any).env?.VITE_GROVIX_API_URL || `${window.location.protocol}//${window.location.hostname}:4000`)
+    : "http://localhost:4000";
+
+  const imageSrcFor = (it: any) => {
+    const url = String(it?.imageUrl || "").trim();
+    if (url) return url;
+    const fid = String(it?.imageFileId || "").trim();
+    if (fid) return `${apiUrl}/files/public/${encodeURIComponent(fid)}`;
+    return "";
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -220,8 +232,12 @@ export default function Internships() {
                       {/* Header */}
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-xl bg-card border border-white/10 flex items-center justify-center">
-                            <Building2 className="w-6 h-6 text-primary" />
+                          <div className="w-12 h-12 rounded-xl bg-card border border-white/10 overflow-hidden flex items-center justify-center">
+                            {imageSrcFor(internship) ? (
+                              <img src={imageSrcFor(internship)} alt={internship.title} className="w-full h-full object-cover" />
+                            ) : (
+                              <Building2 className="w-6 h-6 text-primary" />
+                            )}
                           </div>
                           <div>
                             <span className={internship.type === "free" ? "badge-free" : "badge-paid"}>

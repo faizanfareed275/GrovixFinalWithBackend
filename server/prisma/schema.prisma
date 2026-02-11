@@ -282,6 +282,7 @@ enum StoredFilePurpose {
   TASK_ATTACHMENT
   TASK_SUBMISSION
   CERTIFICATE
+  INTERNSHIP_IMAGE
 }
 
 enum ChatConversationType {
@@ -539,6 +540,9 @@ model Internship {
   description String
   applicants  Int      @default(0)
 
+  imageUrl    String?
+  imageFileId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -550,6 +554,8 @@ model Internship {
   badgeRules   InternshipBadgeRule[]
   taskTemplates InternshipTaskTemplate[]
   certificates InternshipCertificate[]
+
+  imageFile StoredFile? @relation("InternshipImageFile", fields: [imageFileId], references: [id], onDelete: SetNull)
 }
 
 model InternshipBatch {
@@ -790,6 +796,7 @@ model StoredFile {
   taskTemplateAttachments InternshipTaskTemplate[] @relation("TaskTemplateAttachment")
   taskAttemptFiles InternshipTaskAttempt[] @relation("TaskAttemptFile")
   certificateFiles InternshipCertificate[] @relation("CertificateFile")
+  internshipImageFiles Internship[] @relation("InternshipImageFile")
 
   @@index([purpose])
   @@index([createdAt])

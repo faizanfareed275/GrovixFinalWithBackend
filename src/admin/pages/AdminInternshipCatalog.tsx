@@ -36,6 +36,7 @@ export default function AdminInternshipCatalog() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<Internship>(emptyForm);
+  const [imageUploading, setImageUploading] = useState(false);
 
   useEffect(() => {
     apiFetch<{ internships: Internship[] }>("/internships")
@@ -68,8 +69,47 @@ export default function AdminInternshipCatalog() {
 
   const openEdit = (it: Internship) => {
     setEditingId(it.id);
-    setForm({ ...it, skills: Array.isArray(it.skills) ? it.skills : [] });
+    setForm({
+      ...it,
+      skills: Array.isArray(it.skills) ? it.skills : [],
+      imageUrl: (it as any).imageUrl ?? null,
+      imageFileId: (it as any).imageFileId ?? null,
+    } as Internship);
     setOpen(true);
+  };
+
+  const uploadImage = async (file: File) => {
+    setImageUploading(true);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_failed"));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await apiFetch<{ file: { id: string } }>("/files/admin/upload", {
+        method: "POST",
+        body: JSON.stringify({
+          purpose: "INTERNSHIP_IMAGE",
+          fileName: file.name,
+          mimeType: file.type || "application/octet-stream",
+          base64,
+        }),
+      });
+
+      if (res?.file?.id) {
+        setForm((p) => ({
+          ...(p as any),
+          imageFileId: String(res.file.id),
+        }));
+        toast.success("Image uploaded");
+      }
+    } catch {
+      toast.error("Image upload failed");
+    } finally {
+      setImageUploading(false);
+    }
   };
 
   const handleDelete = (id: number) => {
@@ -108,6 +148,14 @@ export default function AdminInternshipCatalog() {
       applicants: Number(form.applicants) || 0,
       salary: form.salary && form.salary.trim() ? form.salary.trim() : null,
       skills: Array.isArray(form.skills) ? form.skills : [],
+      imageUrl:
+        (form as any).imageUrl && String((form as any).imageUrl).trim()
+          ? String((form as any).imageUrl).trim()
+          : null,
+      imageFileId:
+        (form as any).imageFileId && String((form as any).imageFileId).trim()
+          ? String((form as any).imageFileId).trim()
+          : null,
     };
 
     const exists = items.some(i => i.id === normalized.id);
@@ -265,11 +313,41 @@ export default function AdminInternshipCatalog() {
                 className="w-full h-32 p-3 rounded-lg bg-muted/20 border border-border focus:outline-none"
               />
             </div>
+
+            <div className="sm:col-span-2">
+              <div className="text-sm font-medium mb-1">Image URL (optional)</div>
+              <Input
+                value={String((form as any).imageUrl || "")}
+                onChange={(e) => setForm({
+                  ...(form as any),
+                  imageUrl: e.target.value,
+                })}
+                placeholder="https://..."
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <div className="text-sm font-medium mb-1">Upload Image (optional)</div>
+              <Input
+                type="file"
+                accept="image/*"
+                disabled={imageUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadImage(file);
+                }}
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                {String((form as any).imageFileId || "").trim()
+                  ? `Uploaded fileId: ${String((form as any).imageFileId)}`
+                  : "No upload"}
+              </div>
+            </div>
           </div>
 
           <DialogFooter className="flex gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="neon" onClick={handleSave}>Save</Button>
+            <Button variant="neon" onClick={handleSave} disabled={imageUploading}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

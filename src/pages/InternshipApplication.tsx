@@ -13,6 +13,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import type { Internship } from "@/data/internships";
 import { useAuth } from "@/hooks/useAuth";
 import { apiFetch } from "@/lib/api";
+import { toast } from "sonner";
 
 type InternshipBatch = {
   id: number;
@@ -63,7 +64,7 @@ export default function InternshipApplication() {
 
   useEffect(() => {
     if (id) {
-      apiFetch<{ internship: Internship }>(`/internships/${id}`)
+      apiFetch<{ internship: Internship }>(`/internships/public/${id}`)
         .then((data) => {
           if (data?.internship) setInternshipDetails(data.internship);
         })
@@ -127,10 +128,15 @@ export default function InternshipApplication() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    if (!user) {
+      toast.error("Please login to submit your application");
+      navigate("/auth");
+      return;
+    }
+
     setIsSubmitting(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
+
     try {
       let resumeBase64: string | null = null;
       let resumeFileName: string | null = null;
@@ -150,7 +156,12 @@ export default function InternshipApplication() {
         }
       }
 
-      await apiFetch(`/internships/${internshipDetails.id}/apply`, {
+      const internshipId = Number(id);
+      if (!Number.isFinite(internshipId) || internshipId <= 0) {
+        throw { status: 400, body: { error: "invalid_id" } };
+      }
+
+      await apiFetch(`/internships/${internshipId}/apply`, {
         method: "POST",
         body: JSON.stringify({
           batchId: selectedBatchId,
@@ -165,7 +176,17 @@ export default function InternshipApplication() {
           resumeMimeType,
         }),
       });
-    } catch {
+    } catch (e: any) {
+      const status = Number(e?.status) || 0;
+      const code = String(e?.body?.error || "");
+      if (status === 401) {
+        toast.error("Please login to submit your application");
+        navigate("/auth");
+      } else if (status === 403 && code) {
+        toast.error(code.replace(/_/g, " "));
+      } else {
+        toast.error("Failed to submit application");
+      }
       setIsSubmitting(false);
       return;
     }

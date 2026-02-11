@@ -17,6 +17,8 @@ interface Internship {
   createdAt?: string;
   description: string;
   internshipCode?: string;
+  imageUrl?: string | null;
+  imageFileId?: string | null;
 }
 
 interface Batch {
@@ -36,11 +38,12 @@ export default function AdminInternships() {
   const [addOpen, setAddOpen] = useState(false);
   const [addBatchOpen, setAddBatchOpen] = useState(false);
   const [selectedInternshipId, setSelectedInternshipId] = useState<number | null>(null);
-  const [addForm, setAddForm] = useState({ title: "", company: "", type: "free", description: "" });
+  const [addForm, setAddForm] = useState({ title: "", company: "", type: "free", description: "", imageUrl: "", imageFileId: "" });
   const [addBatchForm, setAddBatchForm] = useState({ name: "", startDate: "", endDate: "", capacity: "" });
+  const [imageUploading, setImageUploading] = useState(false);
 
   const fetchBatches = async (internshipId: number) => {
-    const d = await apiFetch<{ batches: Batch[] }>(`/internships/${internshipId}/batches`);
+    const d = await apiFetch<{ batches: Batch[] }>(`/internships/${internshipId}/admin/batches`);
     if (d?.batches) setBatchesByInternship(prev => ({ ...prev, [internshipId]: d.batches }));
   };
 
@@ -63,6 +66,8 @@ export default function AdminInternships() {
         company: addForm.company,
         type: addForm.type,
         description: addForm.description,
+        imageUrl: addForm.imageUrl.trim() ? addForm.imageUrl.trim() : null,
+        imageFileId: addForm.imageFileId.trim() ? addForm.imageFileId.trim() : null,
       };
       const result = await apiFetch<{ internship: Internship }>('/internships', {
         method: 'POST',
@@ -70,12 +75,41 @@ export default function AdminInternships() {
       });
       if (result?.internship) {
         setInternships([result.internship, ...internships]);
-        setAddForm({ title: '', company: '', type: 'free', description: '' });
+        setAddForm({ title: '', company: '', type: 'free', description: '', imageUrl: '', imageFileId: '' });
         setAddOpen(false);
         toast.success('Internship added');
       }
     } catch {
       toast.error('Failed to add internship');
+    }
+  };
+
+  const uploadImage = async (file: File) => {
+    setImageUploading(true);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("read_failed"));
+        reader.readAsDataURL(file);
+      });
+      const res = await apiFetch<{ file: { id: string } }>("/files/admin/upload", {
+        method: "POST",
+        body: JSON.stringify({
+          purpose: "INTERNSHIP_IMAGE",
+          fileName: file.name,
+          mimeType: file.type || "application/octet-stream",
+          base64,
+        }),
+      });
+      if (res?.file?.id) {
+        setAddForm((p) => ({ ...p, imageFileId: String(res.file.id) }));
+        toast.success("Image uploaded");
+      }
+    } catch {
+      toast.error("Image upload failed");
+    } finally {
+      setImageUploading(false);
     }
   };
 
@@ -91,7 +125,7 @@ export default function AdminInternships() {
         endDate: addBatchForm.endDate,
         capacity: addBatchForm.capacity ? Number(addBatchForm.capacity) : null,
       };
-      const result = await apiFetch<{ batch: Batch }>(`/internships/${selectedInternshipId}/batches`, {
+      const result = await apiFetch<{ batch: Batch }>(`/internships/${selectedInternshipId}/admin/batches`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -232,10 +266,32 @@ export default function AdminInternships() {
               <Label htmlFor="description">Description</Label>
               <Textarea id="description" value={addForm.description} onChange={e => setAddForm(f => ({ ...f, description: e.target.value }))} placeholder="Internship description" rows={3} />
             </div>
+
+            <div>
+              <Label htmlFor="imageUrl">Image URL (optional)</Label>
+              <Input id="imageUrl" value={addForm.imageUrl} onChange={e => setAddForm(f => ({ ...f, imageUrl: e.target.value }))} placeholder="https://..." />
+            </div>
+
+            <div>
+              <Label htmlFor="imageUpload">Upload Image (optional)</Label>
+              <Input
+                id="imageUpload"
+                type="file"
+                accept="image/*"
+                disabled={imageUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadImage(file);
+                }}
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                {addForm.imageFileId ? `Uploaded fileId: ${addForm.imageFileId}` : "No upload"}
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddInternship}>Add</Button>
+            <Button onClick={handleAddInternship} disabled={imageUploading}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

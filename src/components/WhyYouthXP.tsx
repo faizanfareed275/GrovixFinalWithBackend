@@ -66,10 +66,10 @@ export function WhyYouthXP() {
           className="text-center mb-16"
         >
           <span className="inline-block px-4 py-1 rounded-full bg-primary/20 text-primary text-sm font-medium mb-4">
-            WHY GROVIX?
+            SKILL DOMAINS
           </span>
           <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
-            The Future of <span className="gradient-text">Skill Building</span>
+            The Future of <span className="text-primary">Skill Building</span>
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             We've reimagined how young professionals learn, prove, and market their skills
@@ -92,12 +92,12 @@ export function WhyYouthXP() {
             >
               <div className="glass-card p-6 h-full border-glow hover:bg-card/80 transition-all duration-300">
                 {/* Icon */}
-                <div className={`w-14 h-14 rounded-xl bg-${feature.color}/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300`}>
-                  <feature.icon className={`w-7 h-7 text-${feature.color}`} />
+                <div className={`w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300`}>
+                  <feature.icon className={`w-7 h-7 text-primary`} />
                 </div>
 
                 {/* Content */}
-                <h3 className="text-xl font-display font-bold mb-2 group-hover:text-primary transition-colors">
+                <h3 className="text-xl font-display font-bold mb-2 transition-colors">
                   {feature.title}
                 </h3>
                 <p className="text-muted-foreground leading-relaxed">

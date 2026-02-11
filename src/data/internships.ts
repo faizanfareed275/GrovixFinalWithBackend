@@ -10,6 +10,8 @@ export interface Internship {
   skills: string[];
   description: string;
   applicants: number;
+  imageUrl?: string | null;
+  imageFileId?: string | null;
 }
 
 export const defaultInternships: Internship[] = [

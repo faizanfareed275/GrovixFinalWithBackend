@@ -134,9 +134,11 @@ function useChatInternal(userId: string | null) {
   const activeConversationIdRef = useRef<string | null>(null);
 
   const apiBaseUrl = useMemo(() => {
-    return typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}:4000`
-      : "http://localhost:4000";
+    const defaultApiUrl =
+      typeof window !== "undefined"
+        ? `${window.location.protocol}//${window.location.hostname}:4000`
+        : "http://localhost:4000";
+    return (import.meta as any).env?.VITE_GROVIX_API_URL || defaultApiUrl;
   }, []);
 
   const socketRef = useRef<Socket | null>(null);
@@ -189,11 +191,18 @@ function useChatInternal(userId: string | null) {
 
   const connectSocket = useCallback(async () => {
     if (!userId) return;
-    if (socketRef.current) return;
+    if (socketRef.current) {
+      if (socketRef.current.connected) return;
+      try {
+        socketRef.current.disconnect();
+      } catch {
+      }
+      socketRef.current = null;
+    }
 
     const s = io(apiBaseUrl, {
       withCredentials: true,
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
     });
 
     socketRef.current = s;
@@ -363,15 +372,14 @@ function useChatInternal(userId: string | null) {
       // If no room key is available for this device, ONLY an OWNER/ADMIN should generate and distribute a new one.
       const access = await apiFetch<{ me: { role: string } }>(`/chat/conversations/${encodeURIComponent(conversationId)}/participants`);
       const myRole = String(access?.me?.role || "MEMBER");
-      const canDistribute = myRole === "OWNER" || myRole === "ADMIN";
-      if (!canDistribute) {
-        throw new Error("missing_room_key");
-      }
+      const convo = conversations.find((c) => c.id === conversationId);
+      const isDirect = String(convo?.type || "") === "DIRECT";
+      const canDistribute = myRole === "OWNER" || myRole === "ADMIN" || isDirect;
+      if (!canDistribute) throw new Error("missing_room_key");
 
       const roomKeyRawB64 = generateRoomKeyRawB64();
       await saveRoomKey(conversationId, roomKeyRawB64);
 
-      const convo = conversations.find((c) => c.id === conversationId);
       if (!convo) return roomKeyRawB64;
 
       const allUserIds = convo.members.map((m) => m.userId);

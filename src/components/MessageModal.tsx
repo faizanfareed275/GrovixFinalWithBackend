@@ -433,7 +433,7 @@ export function MessageModal({
         .then(async (r) => (r.ok ? await r.json() : null))
         .then((d: unknown) => {
           const pinsRaw = (d && typeof d === "object") ? (d as { pins?: unknown }).pins : undefined;
-          if (d && Array.isArray(d.pins)) setPins(d.pins);
+          if (Array.isArray(pinsRaw)) setPins(pinsRaw as { messageId: string; pinnedBy: string; createdAt: string }[]);
         })
         .catch(() => {
           void 0;
@@ -550,16 +550,16 @@ export function MessageModal({
               className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             />
 
-            {/* Modal */}
+            {/* Modal - Compact Chat Widget Style */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-0 md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:inset-auto w-full md:max-w-lg h-full md:h-[600px] z-50 flex flex-col"
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className="fixed bottom-0 right-0 md:bottom-4 md:right-4 w-full md:w-[400px] h-[100dvh] md:h-[600px] z-[100] flex flex-col pointer-events-none"
             >
-              <div className="glass-card mx-0 md:mx-4 flex flex-col h-full overflow-hidden">
+              <div className="glass-card mx-0 md:mx-0 flex flex-col h-full overflow-hidden rounded-none md:rounded-2xl border-none md:border shadow-2xl pointer-events-auto">
                 {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border shrink-0">
+                <div className="flex items-center justify-between p-3 sm:p-4 border-b border-border shrink-0 bg-background/50 backdrop-blur-sm">
                   <button
                     type="button"
                     onClick={() => {
@@ -609,7 +609,7 @@ export function MessageModal({
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 scrollbar-cyber">
                   {activeMessages.length === 0 ? (
                     <div className="flex items-center justify-center h-full text-muted-foreground">
                       <p>No messages yet. Say hello!</p>
@@ -796,7 +796,7 @@ export function MessageModal({
                 </div>
 
                 {/* Input */}
-                <div className="p-4 border-t border-border shrink-0 relative">
+                <div className="p-3 sm:p-4 border-t border-border shrink-0 relative bg-background/50 backdrop-blur-sm">
                   {/* Emoji Picker */}
                   <AnimatePresence>
                     {showEmojiPicker && (

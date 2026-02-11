@@ -31,6 +31,8 @@ function normalizeItem(raw: any, userXP: number) {
     salary: raw?.salary ?? null,
     duration: String(raw?.duration || ""),
     skills,
+    imageUrl: raw?.imageUrl ?? null,
+    imageFileId: raw?.imageFileId ?? null,
     unlocked: userXP >= xpRequired,
   };
 }
@@ -38,6 +40,18 @@ function normalizeItem(raw: any, userXP: number) {
 export function FeaturedInternships() {
   const [userXP, setUserXP] = useState(0);
   const [items, setItems] = useState<any[]>([]);
+
+  const apiUrl = typeof window !== "undefined"
+    ? ((import.meta as any).env?.VITE_GROVIX_API_URL || `${window.location.protocol}//${window.location.hostname}:4000`)
+    : "http://localhost:4000";
+
+  const imageSrcFor = (it: any) => {
+    const url = String(it?.imageUrl || "").trim();
+    if (url) return url;
+    const fid = String(it?.imageFileId || "").trim();
+    if (fid) return `${apiUrl}/files/public/${encodeURIComponent(fid)}`;
+    return "";
+  };
 
   useEffect(() => {
     apiFetch<{ xp: number }>("/xp/me")
@@ -73,7 +87,7 @@ export function FeaturedInternships() {
             INTERNSHIP TRACKS
           </span>
           <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
-            Unlock <span className="gradient-text-green">Real Opportunities</span>
+            Unlock <span className="text-accent">Real Opportunities</span>
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Earn XP, complete challenges, and unlock free and paid internships at top companies
@@ -114,12 +128,16 @@ export function FeaturedInternships() {
               className="group relative"
             >
               <div className={`glass-card card-3d p-6 h-full ${!internship.unlocked ? 'opacity-75' : ''}`}>
-                {/* Lock Overlay */}
                 {!internship.unlocked && (
-                  <div className="absolute inset-0 bg-cyber-dark/60 backdrop-blur-sm rounded-xl flex items-center justify-center z-10">
-                    <div className="text-center">
-                      <Lock className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">
+                  <div className="absolute inset-0 bg-background/80 backdrop-blur-[2px] rounded-xl flex items-center justify-center z-10 transition-all duration-300">
+                    <div className="text-center p-4">
+                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
+                        <Lock className="w-6 h-6 text-primary" />
+                      </div>
+                      <p className="text-sm font-bold text-foreground mb-1">
+                        Locked
+                      </p>
+                      <p className="text-xs font-medium text-primary">
                         {internship.xpRequired.toLocaleString()} XP Required
                       </p>
                     </div>
@@ -138,15 +156,19 @@ export function FeaturedInternships() {
 
                 {/* Company Logo Placeholder */}
                 <div className="w-12 h-12 rounded-lg bg-card border border-white/10 flex items-center justify-center mb-4">
-                  <img 
-                    src={achievementBadge} 
-                    alt="Company" 
-                    className="w-8 h-8 object-contain"
-                  />
+                  {imageSrcFor(internship) ? (
+                    <img src={imageSrcFor(internship)} alt={internship.title} className="w-full h-full object-cover rounded-lg" />
+                  ) : (
+                    <img 
+                      src={achievementBadge} 
+                      alt="Company" 
+                      className="w-8 h-8 object-contain"
+                    />
+                  )}
                 </div>
 
                 {/* Content */}
-                <h3 className="text-lg font-display font-bold mb-1 group-hover:text-primary transition-colors">
+                <h3 className="text-lg font-display font-bold mb-1 transition-colors">
                   {internship.title}
                 </h3>
                 <p className="text-sm text-muted-foreground mb-4">

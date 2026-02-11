@@ -62,11 +62,11 @@ export function SkillDomains() {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <span className="inline-block px-4 py-1 rounded-full bg-secondary/20 text-secondary text-sm font-medium mb-4">
+          <span className="inline-block px-4 py-1 rounded-full bg-primary/20 text-primary text-sm font-medium mb-4">
             SKILL DOMAINS
           </span>
           <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
-            Master <span className="gradient-text">In-Demand Skills</span>
+            Master <span className="text-primary">In-Demand Skills</span>
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Choose your path and start leveling up with hands-on challenges
@@ -103,7 +103,7 @@ export function SkillDomains() {
                   </div>
 
                   {/* Content */}
-                  <h3 className="text-xl font-display font-bold mb-2 text-center group-hover:text-primary transition-colors">
+                  <h3 className="text-xl font-display font-bold mb-2 text-center transition-colors">
                     {skill.name}
                   </h3>
                   <p className="text-muted-foreground text-center mb-6 text-sm">

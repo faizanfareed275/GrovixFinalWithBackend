@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { ArrowRight, Play, Zap, Trophy, Users, Sparkles, Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { XPBar } from "@/components/XPBar";
-import heroBg from "@/assets/hero-bg.jpg";
+import heroBg from "@/assets/hero-banner.jpg";
 
 const stats = [
   { icon: Users, value: "50K+", label: "Active Learners" },
@@ -15,24 +15,24 @@ export function HeroSection() {
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-24">
       {/* Background - Light Theme Optimized */}
       <div className="absolute inset-0">
-        {/* Dark mode: show image */}
+        {/* Banner image (light + dark) */}
         <img
           src={heroBg}
-          alt="Futuristic background"
-          className="w-full h-full object-cover opacity-0 dark:opacity-40 transition-opacity"
+          alt="Hero background"
+          className="w-full h-full object-cover opacity-45 dark:opacity-55 transition-opacity"
         />
-        
-        {/* Light mode: gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-secondary/5 dark:from-cyber-dark/60 dark:via-cyber-dark/80 dark:to-cyber-dark" />
+
+        {/* Readability overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-background/75 via-background/35 to-background/80 dark:from-cyber-dark/55 dark:via-cyber-dark/60 dark:to-cyber-dark/70" />
         
         {/* Decorative circles for light mode */}
-        <div className="absolute top-20 left-10 w-72 h-72 bg-primary/10 rounded-full blur-3xl dark:bg-neon-purple/10" />
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-secondary/10 rounded-full blur-3xl dark:bg-neon-blue/10" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl dark:bg-neon-green/5" />
+        <div className="hidden absolute top-20 left-10 w-72 h-72 bg-primary/10 rounded-full blur-3xl dark:bg-neon-purple/10" />
+        <div className="hidden absolute bottom-20 right-10 w-96 h-96 bg-secondary/10 rounded-full blur-3xl dark:bg-neon-blue/10" />
+        <div className="hidden absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/5 rounded-full blur-3xl dark:bg-neon-green/5" />
       </div>
 
       {/* Animated Grid Lines */}
-      <div className="absolute inset-0 opacity-10 dark:opacity-20">
+      <div className="hidden absolute inset-0 opacity-10 dark:opacity-20">
         <div 
           className="absolute inset-0"
           style={{
@@ -49,14 +49,14 @@ export function HeroSection() {
       <motion.div
         animate={{ rotate: 360 }}
         transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-        className="absolute top-1/4 right-1/4 hidden lg:block"
+        className="hidden absolute top-1/4 right-1/4 hidden lg:block"
       >
         <Sparkles className="w-8 h-8 text-primary/30 dark:text-neon-blue/30" />
       </motion.div>
       <motion.div
         animate={{ rotate: -360 }}
         transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-        className="absolute bottom-1/3 left-1/4 hidden lg:block"
+        className="hidden absolute bottom-1/3 left-1/4 hidden lg:block"
       >
         <Rocket className="w-10 h-10 text-secondary/30 dark:text-neon-purple/30" />
       </motion.div>
@@ -85,12 +85,12 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-5xl md:text-7xl lg:text-8xl font-display font-black mb-6 leading-tight"
+            className="text-5xl md:text-7xl lg:text-8xl font-display font-black mb-6 leading-tight tracking-tight"
           >
             <span className="text-foreground">Learn.</span>{" "}
-            <span className="gradient-text">Level Up.</span>{" "}
+            <span className="text-primary">Level Up.</span>{" "}
             <span className="text-foreground">Get</span>{" "}
-            <span className="gradient-text-green">Hired.</span>
+            <span className="text-accent">Hired.</span>
           </motion.h1>
 
           {/* Subtitle */}
@@ -98,10 +98,10 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-2xl mx-auto"
+            className="text-xl md:text-2xl text-muted-foreground/90 font-medium mb-10 max-w-2xl mx-auto"
           >
-            The gamified skill-building platform where you complete challenges, 
-            earn XP, unlock internships, and get hired by top companies.
+            Master high-demand skills through gamified challenges, 
+            earn industry-recognized experience, and secure your future.
           </motion.p>
 
           {/* XP Demo */}
@@ -149,7 +149,7 @@ export function HeroSection() {
                 <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-card/60 border border-white/10 mb-3">
                   <stat.icon className="w-6 h-6 text-primary" />
                 </div>
-                <div className="text-3xl md:text-4xl font-display font-bold gradient-text mb-1">
+                <div className="text-3xl md:text-4xl font-display font-bold text-primary mb-1">
                   {stat.value}
                 </div>
                 <div className="text-sm text-muted-foreground">{stat.label}</div>
@@ -163,17 +163,17 @@ export function HeroSection() {
       <motion.div
         animate={{ y: [0, -20, 0] }}
         transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute left-10 top-1/3 w-20 h-20 rounded-full bg-secondary/20 dark:bg-neon-purple/20 blur-xl"
+        className="hidden absolute left-10 top-1/3 w-20 h-20 rounded-full bg-secondary/20 dark:bg-neon-purple/20 blur-xl"
       />
       <motion.div
         animate={{ y: [0, 20, 0] }}
         transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute right-10 bottom-1/3 w-32 h-32 rounded-full bg-primary/20 dark:bg-neon-blue/20 blur-xl"
+        className="hidden absolute right-10 bottom-1/3 w-32 h-32 rounded-full bg-primary/20 dark:bg-neon-blue/20 blur-xl"
       />
       <motion.div
         animate={{ scale: [1, 1.2, 1] }}
         transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute left-1/4 bottom-1/4 w-24 h-24 rounded-full bg-accent/15 dark:bg-neon-green/15 blur-xl hidden lg:block"
+        className="hidden absolute left-1/4 bottom-1/4 w-24 h-24 rounded-full bg-accent/15 dark:bg-neon-green/15 blur-xl hidden lg:block"
       />
     </section>
   );
