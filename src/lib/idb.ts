@@ -69,3 +69,14 @@ export async function idbPut(storeName: StoreName, value: any): Promise<void> {
     req.onerror = () => reject(req.error);
   });
 }
+
+export async function idbDel(storeName: StoreName, key: IDBValidKey): Promise<void> {
+  const db = await openDb();
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    const store = tx.objectStore(storeName);
+    const req = store.delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}

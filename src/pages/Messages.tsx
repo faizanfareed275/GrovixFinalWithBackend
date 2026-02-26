@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Search, MessageCircle, MoreVertical, 
+import {
+  Search, MessageCircle, MoreVertical,
   ArrowLeft, Send, Image, Smile, Phone, Video, Paperclip, Pencil, Trash2, Pin, X, Plus, Download, ExternalLink, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -78,7 +78,8 @@ function parsePayload(
         };
       }
       if (p && p.t === "text") {
-        return { kind: "text", text: String(p.text || "") };
+        const textStr = String(p.text || "");
+        return { kind: "text", text: textStr };
       }
     } catch {
       void 0;
@@ -110,13 +111,13 @@ type ImageDraft = { id: string; dataUrl: string; name?: string };
 type RenderItem =
   | { kind: "message"; message: ChatMessage }
   | {
-      kind: "album";
-      senderId: string;
-      images: { id: string; dataUrl: string }[];
-      caption?: string;
-      sourceMessageId?: string;
-      createdAt: string;
-    };
+    kind: "album";
+    senderId: string;
+    images: { id: string; dataUrl: string }[];
+    caption?: string;
+    sourceMessageId?: string;
+    createdAt: string;
+  };
 
 function isImageUrl(s: string | undefined): boolean {
   const v = String(s || "");
@@ -179,7 +180,11 @@ export default function Messages() {
   } = useChat(user?.id || null);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedConversation, setSelectedConversation] = useState<ChatConversation | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const selectedConversation = useMemo(() => {
+    if (!selectedConversationId) return null;
+    return conversations.find((c) => c.id === selectedConversationId) || null;
+  }, [conversations, selectedConversationId]);
   const [newMessage, setNewMessage] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [callModalOpen, setCallModalOpen] = useState(false);
@@ -237,14 +242,14 @@ export default function Messages() {
   }, [loadConversations]);
 
   useEffect(() => {
-    if (selectedConversation) {
-      openConversation(selectedConversation.id);
+    if (selectedConversationId) {
+      openConversation(selectedConversationId);
     }
-  }, [selectedConversation, openConversation]);
+  }, [selectedConversationId, openConversation]);
 
   useEffect(() => {
     setTypingFromUserIds({});
-  }, [selectedConversation?.id]);
+  }, [selectedConversationId]);
 
   useEffect(() => {
     return () => {
@@ -264,8 +269,8 @@ export default function Messages() {
       const fromUserId = String(d.userId || "");
       const isTyping = !!d.isTyping;
 
-      if (!selectedConversation?.id) return;
-      if (conversationId !== String(selectedConversation.id)) return;
+      if (!selectedConversationId) return;
+      if (conversationId !== String(selectedConversationId)) return;
       if (!fromUserId || fromUserId === String(user?.id || "")) return;
 
       setTypingFromUserIds((prev) => {
@@ -285,10 +290,10 @@ export default function Messages() {
     return () => {
       window.removeEventListener("chat:typing", onTyping);
     };
-  }, [selectedConversation?.id, user?.id]);
+  }, [selectedConversationId, user?.id]);
 
   useEffect(() => {
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) {
       setPins([]);
       return;
@@ -301,10 +306,10 @@ export default function Messages() {
         const status = (e && typeof e === "object") ? (e as { status?: unknown }).status : undefined;
         if (Number(status) === 501) setPins([]);
       });
-  }, [selectedConversation?.id]);
+  }, [selectedConversationId]);
 
   useEffect(() => {
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) {
       setConversationStats(null);
       return;
@@ -318,7 +323,7 @@ export default function Messages() {
         }
       })
       .catch(() => setConversationStats(null));
-  }, [selectedConversation?.id]);
+  }, [selectedConversationId]);
 
   useEffect(() => {
     if (!newGroupOpen) return;
@@ -344,19 +349,19 @@ export default function Messages() {
 
   useEffect(() => {
     if (!manageGroupOpen) return;
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) return;
 
     fetchParticipants(conversationId)
       .then((d) => {
-        setMyRole(typeof d?.myRole === "string" ? (d.myRole as "OWNER" | "ADMIN" | "MEMBER") : "MEMBER");
-        setParticipants(Array.isArray(d?.participants) ? (d.participants as GroupParticipant[]) : []);
+        setMyRole(d.myRole);
+        setParticipants(d.participants);
       })
       .catch(() => {
         setMyRole("MEMBER");
         setParticipants([]);
       });
-  }, [manageGroupOpen, selectedConversation?.id, fetchParticipants]);
+  }, [manageGroupOpen, selectedConversationId, fetchParticipants]);
 
   useEffect(() => {
     if (!manageGroupOpen) return;
@@ -416,7 +421,7 @@ export default function Messages() {
   }, []);
 
   const handleReshareKey = async () => {
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) return;
     setReshareBusy(true);
     try {
@@ -466,21 +471,21 @@ export default function Messages() {
   );
 
   const handleSendMessage = () => {
-    if (!newMessage.trim() || !user || !selectedConversation) return;
+    if (!newMessage.trim() || !user || !selectedConversationId) return;
 
-    sendMessage(selectedConversation.id, newMessage, "TEXT").catch((e: unknown) => {
+    sendMessage(selectedConversationId, newMessage, "TEXT").catch((e: unknown) => {
       const msg = String((e && typeof e === "object") ? (e as { message?: unknown }).message : "");
       if (msg === "missing_room_key") {
         window.alert("You can't send messages in this group yet. Ask an OWNER/ADMIN to share the group key (or re-add you).");
       }
     });
     setNewMessage("");
-    sendTyping(selectedConversation.id, false);
+    sendTyping(selectedConversationId, false);
     setShowEmojiPicker(false);
   };
 
   const handleSendFile = (file: File, kind: "image" | "file") => {
-    if (!user || !selectedConversation) return;
+    if (!user || !selectedConversationId) return;
     const maxBytes = 5 * 1024 * 1024;
     if (file.size > maxBytes) {
       toast.error("File is too large (max 5MB)");
@@ -492,7 +497,7 @@ export default function Messages() {
       if (!dataUrl) return;
 
       if (kind === "image" && file.type.startsWith("image/")) {
-        sendMessage(selectedConversation.id, dataUrl, "IMAGE").catch((e: unknown) => {
+        sendMessage(selectedConversationId, dataUrl, "IMAGE").catch((e: unknown) => {
           const msg = String((e && typeof e === "object") ? (e as { message?: unknown }).message : "");
           if (msg === "missing_room_key") {
             window.alert("You can't send messages in this group yet. Ask an OWNER/ADMIN to share the group key (or re-add you).");
@@ -502,7 +507,7 @@ export default function Messages() {
       }
 
       const payload = `${PAYLOAD_PREFIX}${JSON.stringify({ t: "file", name: file.name, mime: file.type || "application/octet-stream", dataUrl, size: file.size })}`;
-      sendMessage(selectedConversation.id, payload, "TEXT").catch((e: unknown) => {
+      sendMessage(selectedConversationId, payload, "TEXT").catch((e: unknown) => {
         const msg = String((e && typeof e === "object") ? (e as { message?: unknown }).message : "");
         if (msg === "missing_room_key") {
           window.alert("You can't send messages in this group yet. Ask an OWNER/ADMIN to share the group key (or re-add you).");
@@ -544,7 +549,7 @@ export default function Messages() {
   };
 
   const sendAlbum = async () => {
-    if (!selectedConversation || !albumDrafts.length) return;
+    if (!selectedConversationId || !albumDrafts.length) return;
     setAlbumBusy(true);
     try {
       const payload = `${PAYLOAD_PREFIX}${JSON.stringify({
@@ -552,7 +557,7 @@ export default function Messages() {
         items: albumDrafts.map((d) => ({ dataUrl: d.dataUrl, name: d.name })),
         caption: albumCaption.trim() ? albumCaption.trim() : undefined,
       })}`;
-      await sendMessage(selectedConversation.id, payload, "TEXT");
+      await sendMessage(selectedConversationId, payload, "TEXT");
       setAlbumOpen(false);
       setAlbumDrafts([]);
       setAlbumCaption("");
@@ -579,8 +584,7 @@ export default function Messages() {
       setNewGroupOpen(false);
       setNewGroupName("");
       await loadConversations();
-      const convo = conversations.find((c) => c.id === id);
-      if (convo) setSelectedConversation(convo);
+      if (id) setSelectedConversationId(String(id));
     } catch (e) {
       console.error(e);
     } finally {
@@ -589,14 +593,14 @@ export default function Messages() {
   };
 
   const handleAddMembers = async (addUserIds: string[]) => {
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) return;
     setAddingMembers(true);
     try {
       await addMembers(conversationId, addUserIds);
       const d = await fetchParticipants(conversationId);
-      setMyRole(typeof d?.myRole === "string" ? (d.myRole as "OWNER" | "ADMIN" | "MEMBER") : "MEMBER");
-      setParticipants(Array.isArray(d?.participants) ? (d.participants as GroupParticipant[]) : []);
+      setMyRole(d.myRole);
+      setParticipants(d.participants);
       setManageSearch("");
       setManageResults([]);
     } catch (e) {
@@ -607,13 +611,13 @@ export default function Messages() {
   };
 
   const handleSetRole = async (targetUserId: string, role: "ADMIN" | "MEMBER") => {
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (!conversationId) return;
     try {
       await promoteMember(conversationId, targetUserId, role);
       const d = await fetchParticipants(conversationId);
-      setMyRole(typeof d?.myRole === "string" ? (d.myRole as "OWNER" | "ADMIN" | "MEMBER") : "MEMBER");
-      setParticipants(Array.isArray(d?.participants) ? (d.participants as GroupParticipant[]) : []);
+      setMyRole(d.myRole);
+      setParticipants(d.participants);
     } catch (e) {
       console.error(e);
     }
@@ -628,10 +632,11 @@ export default function Messages() {
   const handleCall = (type: "audio" | "video") => {
     setCallType(type);
     setCallModalOpen(true);
-    const conversationId = selectedConversation?.id;
+    const conversationId = selectedConversationId;
     if (conversationId) {
       startCall(conversationId, type).catch((e) => {
         console.error(e);
+        toast.error("Failed to start call");
       });
     }
   };
@@ -644,10 +649,10 @@ export default function Messages() {
   };
 
   const handleSaveEdit = async () => {
-    if (!user || !selectedConversation || !editingMessageId) return;
+    if (!user || !selectedConversationId || !editingMessageId) return;
     const v = editingValue;
     try {
-      await editMessage(selectedConversation.id, editingMessageId, v);
+      await editMessage(selectedConversationId, editingMessageId, v);
       setEditingMessageId(null);
       setEditingValue("");
     } catch (e) {
@@ -657,9 +662,9 @@ export default function Messages() {
   };
 
   const handleConfirmDelete = async () => {
-    if (!user || !selectedConversation || !deleteTargetId) return;
+    if (!user || !selectedConversationId || !deleteTargetId) return;
     try {
-      await deleteMessage(selectedConversation.id, deleteTargetId);
+      await deleteMessage(selectedConversationId, deleteTargetId);
       setDeleteTargetId(null);
     } catch (e) {
       console.error(e);
@@ -668,22 +673,21 @@ export default function Messages() {
   };
 
   const handlePinMessage = async (messageId: string) => {
-    if (!selectedConversation) return;
+    if (!selectedConversationId) return;
     try {
-      const conversationId = selectedConversation.id;
       const isPinned = pins.some((p) => p.messageId === messageId);
       if (isPinned) {
-        await apiFetch(`/chat/conversations/${encodeURIComponent(conversationId)}/pins/${encodeURIComponent(messageId)}`, { method: "DELETE" });
+        await apiFetch(`/chat/conversations/${encodeURIComponent(selectedConversationId)}/pins/${encodeURIComponent(messageId)}`, { method: "DELETE" });
         setPins((prev) => prev.filter((p) => p.messageId !== messageId));
         toast.success("Unpinned");
       } else {
-        await apiFetch(`/chat/conversations/${encodeURIComponent(conversationId)}/pins`, {
+        await apiFetch(`/chat/conversations/${encodeURIComponent(selectedConversationId)}/pins`, {
           method: "POST",
           body: JSON.stringify({ messageId }),
         });
         setPinsOpen(true);
         await apiFetch<{ pins: { messageId: string; pinnedBy: string; createdAt: string }[] }>(
-          `/chat/conversations/${encodeURIComponent(conversationId)}/pins`
+          `/chat/conversations/${encodeURIComponent(selectedConversationId)}/pins`
         )
           .then((d) => setPins(Array.isArray(d?.pins) ? d.pins : []))
           .catch(() => {
@@ -844,7 +848,7 @@ export default function Messages() {
         <div className="glass-card overflow-hidden h-[calc(100vh-140px)] md:h-[calc(100vh-120px)]">
           <div className="flex h-full">
             {/* Conversations List */}
-            <div className={`w-full md:w-80 lg:w-96 border-r border-border flex flex-col ${selectedConversation ? "hidden md:flex" : "flex"}`}>
+            <div className={`w-full md:w-80 lg:w-96 border-r border-border flex flex-col ${selectedConversationId ? "hidden md:flex" : "flex"}`}>
               {/* Header */}
               <div className="p-4 border-b border-border">
                 <div className="flex items-center justify-between mb-4">
@@ -883,10 +887,9 @@ export default function Messages() {
                       key={conversation.id}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      onClick={() => setSelectedConversation(conversation)}
-                      className={`flex items-center gap-3 p-4 border-b border-border cursor-pointer transition-colors hover:bg-muted/50 ${
-                        selectedConversation?.id === conversation.id ? "bg-primary/10" : ""
-                      }`}
+                      onClick={() => setSelectedConversationId(conversation.id)}
+                      className={`flex items-center gap-3 p-4 border-b border-border cursor-pointer transition-colors hover:bg-muted/50 ${selectedConversationId === conversation.id ? "bg-primary/10" : ""
+                        }`}
                     >
                       <div className="relative">
                         <UserAvatar src={conversation.avatarUrl || undefined} initials={initialsFromName(conversation.name)} size="md" className="w-12 h-12" />
@@ -919,14 +922,14 @@ export default function Messages() {
             </div>
 
             {/* Chat Area */}
-            <div className={`flex-1 flex flex-col ${selectedConversation ? "flex" : "hidden md:flex"}`}>
-              {selectedConversation ? (
+            <div className={`flex-1 flex flex-col ${selectedConversationId ? "flex" : "hidden md:flex"}`}>
+              {selectedConversationId ? (
                 <>
                   {/* Chat Header */}
                   <div className="flex items-center justify-between p-4 border-b border-border">
                     <div className="flex items-center gap-3">
-                      <button 
-                        onClick={() => setSelectedConversation(null)}
+                      <button
+                        onClick={() => setSelectedConversationId(null)}
                         className="md:hidden p-2 hover:bg-muted rounded-lg"
                       >
                         <ArrowLeft className="w-5 h-5" />
@@ -960,13 +963,13 @@ export default function Messages() {
                       >
                         <Pin className="w-5 h-5 text-muted-foreground" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleCall("audio")}
                         className="p-2 hover:bg-muted rounded-lg transition-colors"
                       >
                         <Phone className="w-5 h-5 text-muted-foreground" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleCall("video")}
                         className="p-2 hover:bg-muted rounded-lg transition-colors"
                       >
@@ -1006,9 +1009,8 @@ export default function Messages() {
                                 ref={(el) => {
                                   if (item.sourceMessageId) messageRefs.current.set(item.sourceMessageId, el);
                                 }}
-                                className={`max-w-[80%] px-3 py-3 rounded-2xl ${
-                                  isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
-                                }`}
+                                className={`max-w-[80%] px-3 py-3 rounded-2xl ${isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
+                                  }`}
                               >
                                 <div className={`grid gap-1 ${cols === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
                                   {item.images.slice(0, 9).map((im) => (
@@ -1083,9 +1085,8 @@ export default function Messages() {
                               className="max-w-[80%]"
                             >
                               <div
-                                className={`px-4 py-2 rounded-2xl ${
-                                  isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
-                                }`}
+                                className={`px-4 py-2 rounded-2xl ${isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
+                                  }`}
                               >
                                 {message.type === "IMAGE" ? (
                                   isImageUrl(message.plaintext) ? (
@@ -1132,7 +1133,7 @@ export default function Messages() {
                                         </div>
                                       </div>
                                     ) : (
-                                      <p className="text-sm whitespace-pre-wrap">{parsed && parsed.kind === "text" ? parsed.text : (message.plaintext || "Encrypted message")}</p>
+                                      <p className="text-sm whitespace-pre-wrap">{parsed && parsed.kind === "text" ? (String(parsed.text || "").trim() ? parsed.text : (message.plaintext || "Encrypted message")) : (message.plaintext || "Encrypted message")}</p>
                                     )}
                                   </>
                                 )}
@@ -1186,8 +1187,8 @@ export default function Messages() {
                           exit={{ opacity: 0, y: 10 }}
                           className="absolute bottom-full left-4 mb-2 z-10"
                         >
-                          <Picker 
-                            data={data} 
+                          <Picker
+                            data={data}
                             onEmojiSelect={handleEmojiSelect}
                             theme="dark"
                             previewPosition="none"
@@ -1227,7 +1228,7 @@ export default function Messages() {
                           }}
                         />
                       </label>
-                      <button 
+                      <button
                         onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                         className={`p-2 hover:bg-muted rounded-lg transition-colors ${showEmojiPicker ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
                       >
@@ -1238,15 +1239,15 @@ export default function Messages() {
                         onChange={(e) => {
                           const v = e.target.value;
                           setNewMessage(v);
-                          if (!selectedConversation?.id) return;
+                          if (!selectedConversationId) return;
                           if (!v.trim()) {
-                            sendTyping(selectedConversation.id, false);
+                            sendTyping(selectedConversationId, false);
                             return;
                           }
-                          sendTyping(selectedConversation.id, true);
+                          sendTyping(selectedConversationId, true);
                           if (typingSelfTimerRef.current) window.clearTimeout(typingSelfTimerRef.current);
                           typingSelfTimerRef.current = window.setTimeout(() => {
-                            sendTyping(selectedConversation.id, false);
+                            sendTyping(selectedConversationId, false);
                           }, 1400);
                         }}
                         placeholder="Type a message..."

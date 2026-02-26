@@ -278,22 +278,39 @@ router.post("/conversations/direct", requireAuth, async (req: any, res) => {
 
   const directKey = [userId, otherUserId].sort().join(":");
 
-  const convo = await db.chatConversation.upsert({
+  // First, try to find existing conversation to avoid upsert deadlock
+  let convo: any = await db.chatConversation.findUnique({
     where: { directKey },
-    update: {},
-    create: {
-      type: "DIRECT",
-      directKey,
-      createdBy: userId,
-      participants: {
-        create: [
-          { userId, role: "OWNER" },
-          { userId: otherUserId, role: "ADMIN" },
-        ],
-      },
-    },
     include: { participants: true },
   });
+
+  if (!convo) {
+    try {
+      convo = await db.chatConversation.create({
+        data: {
+          type: "DIRECT",
+          directKey,
+          createdBy: userId,
+          participants: {
+            create: [
+              { userId, role: "OWNER" },
+              { userId: otherUserId, role: "ADMIN" },
+            ],
+          },
+        },
+        include: { participants: true },
+      });
+    } catch (e: any) {
+      // If create fails due to unique constraint, fetch existing
+      if (e && typeof e === "object" && String(e.code || "") === "P2002") {
+        convo = await db.chatConversation.findUnique({
+          where: { directKey },
+          include: { participants: true },
+        });
+      }
+      if (!convo) throw e;
+    }
+  }
 
   return res.json({ conversation: { id: convo.id, type: convo.type, name: null } });
 });
@@ -476,22 +493,41 @@ router.post("/conversations/:id/keys", requireAuth, async (req: any, res) => {
   });
   if (!participant) return res.status(403).json({ error: "forbidden" });
 
+  const convo = await db.chatConversation.findUnique({ where: { id: conversationId }, select: { type: true } });
+  if (!convo) return res.status(404).json({ error: "not_found" });
+
   const role = String(participant.role || "MEMBER");
   const isAdmin = role === "OWNER" || role === "ADMIN";
-  if (!isAdmin) return res.status(403).json({ error: "forbidden" });
+  const canDistributeKeys = convo.type === "DIRECT" || isAdmin;
+  if (!canDistributeKeys) return res.status(403).json({ error: "forbidden" });
 
-  const created = await db.$transaction(
-    parsed.data.items.map((it) =>
-      db.chatConversationKey.upsert({
-        where: { conversationId_deviceKeyId: { conversationId, deviceKeyId: it.deviceKeyId } },
-        update: { encryptedKeyB64: it.encryptedKeyB64, ivB64: it.ivB64 ?? null, userId: it.userId },
-        create: { conversationId, deviceKeyId: it.deviceKeyId, userId: it.userId, ivB64: it.ivB64 ?? null, encryptedKeyB64: it.encryptedKeyB64 },
-        select: { id: true },
-      })
-    )
-  );
+  // Use sequential operations with retry instead of batch transaction to avoid deadlocks
+  let created = 0;
+  for (const it of parsed.data.items) {
+    let attempts = 0;
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
+      try {
+        await db.chatConversationKey.upsert({
+          where: { conversationId_deviceKeyId: { conversationId, deviceKeyId: it.deviceKeyId } },
+          update: { encryptedKeyB64: it.encryptedKeyB64, ivB64: it.ivB64 ?? null, userId: it.userId },
+          create: { conversationId, deviceKeyId: it.deviceKeyId, userId: it.userId, ivB64: it.ivB64 ?? null, encryptedKeyB64: it.encryptedKeyB64 },
+        });
+        created++;
+        break; // Success, move to next item
+      } catch (e: any) {
+        attempts++;
+        if (attempts >= maxAttempts) {
+          console.error("[chat] Failed to upsert key after retries", { conversationId, deviceKeyId: it.deviceKeyId, error: e?.message });
+          throw e;
+        }
+        // Wait before retry
+        await new Promise(r => setTimeout(r, 50 * attempts));
+      }
+    }
+  }
 
-  return res.json({ ok: true, created: created.length });
+  return res.json({ ok: true, created });
 });
 
 router.get("/conversations/:id/keys/me", requireAuth, async (req: any, res) => {

@@ -1,4 +1,4 @@
-import { idbGet, idbPut } from "@/lib/idb";
+import { idbDel, idbGet, idbPut } from "@/lib/idb";
 
 function bufToB64(buf: ArrayBuffer) {
   const bytes = new Uint8Array(buf);
@@ -169,6 +169,10 @@ export async function loadRoomKey(conversationId: string) {
 
 export async function saveRoomKey(conversationId: string, roomKeyRawB64: string) {
   await idbPut("room_keys", { conversationId, roomKeyRawB64, updatedAt: Date.now() });
+}
+
+export async function deleteRoomKey(conversationId: string) {
+  await idbDel("room_keys", conversationId);
 }
 
 export async function encryptMessage(roomKeyRawB64: string, plaintext: string) {

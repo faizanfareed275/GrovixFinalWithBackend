@@ -134,7 +134,40 @@ io.on("connection", async (socket) => {
     const conversationId = String(payload?.conversationId || "");
     if (!conversationId) return;
     const isTyping = !!payload?.isTyping;
-    socket.to(`conv:${conversationId}`).emit("chat:typing", { conversationId, userId, isTyping });
+    try {
+      const participants = await db.chatParticipant.findMany({ where: { conversationId }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:typing", { conversationId, userId, isTyping });
+    } catch { }
+  });
+
+  socket.on("chat:key_request", async (payload: any, cb?: (resp: any) => void) => {
+    const conversationId = String(payload?.conversationId || "");
+    if (!conversationId) return cb?.({ ok: false, error: "invalid_id" });
+    try {
+      const part = await db.chatParticipant.findUnique({ where: { conversationId_userId: { conversationId, userId } } });
+      if (!part) return cb?.({ ok: false, error: "forbidden" });
+      const participants = await db.chatParticipant.findMany({ where: { conversationId }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:key_request", { conversationId, fromUserId: userId });
+      return cb?.({ ok: true });
+    } catch {
+      return cb?.({ ok: false, error: "server_error" });
+    }
+  });
+
+  socket.on("chat:keys_shared", async (payload: any) => {
+    const conversationId = String(payload?.conversationId || "");
+    if (!conversationId) return;
+    try {
+      const part = await db.chatParticipant.findUnique({ where: { conversationId_userId: { conversationId, userId } } });
+      if (!part) return;
+      const participants = await db.chatParticipant.findMany({ where: { conversationId }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:keys_shared", { conversationId });
+    } catch {
+      // Silent fail
+    }
   });
 
   socket.on("chat:send", async (payload: any, cb?: (resp: any) => void) => {
@@ -156,7 +189,9 @@ io.on("connection", async (socket) => {
       await db.chatConversation.update({ where: { id: conversationId }, data: {} });
 
       const out = { ...msg, createdAt: msg.createdAt.toISOString() };
-      io.to(`conv:${conversationId}`).emit("chat:message", out);
+      const participants = await db.chatParticipant.findMany({ where: { conversationId }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:message", out);
       return cb?.({ ok: true, message: out });
     } catch {
       return cb?.({ ok: false, error: "server_error" });
@@ -185,7 +220,9 @@ io.on("connection", async (socket) => {
       await db.chatConversation.update({ where: { id: String(existing.conversationId) }, data: {} });
 
       const out = { ...updated, createdAt: updated.createdAt.toISOString() };
-      io.to(`conv:${String(existing.conversationId)}`).emit("chat:message_updated", out);
+      const participants = await db.chatParticipant.findMany({ where: { conversationId: String(existing.conversationId) }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:message_updated", out);
       return cb?.({ ok: true, message: out });
     } catch {
       return cb?.({ ok: false, error: "server_error" });
@@ -207,7 +244,9 @@ io.on("connection", async (socket) => {
       await db.chatMessage.delete({ where: { id: messageId } });
       await db.chatConversation.update({ where: { id: String(existing.conversationId) }, data: {} });
 
-      io.to(`conv:${String(existing.conversationId)}`).emit("chat:message_deleted", { conversationId: String(existing.conversationId), messageId });
+      const participants = await db.chatParticipant.findMany({ where: { conversationId: String(existing.conversationId) }, select: { userId: true } });
+      const rooms = participants.map((p: any) => `user:${p.userId}`);
+      if (rooms.length > 0) socket.to(rooms).emit("chat:message_deleted", { conversationId: String(existing.conversationId), messageId });
       return cb?.({ ok: true });
     } catch {
       return cb?.({ ok: false, error: "server_error" });

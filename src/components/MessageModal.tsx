@@ -17,6 +17,8 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
+  FileText,
+  PlayCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -49,14 +51,14 @@ import { toast } from "sonner";
 
 const PAYLOAD_PREFIX = "grovix_payload:";
 
-type ImageDraft = { id: string; dataUrl: string; name?: string };
+type ImageDraft = { id: string; dataUrl: string; name?: string; mime?: string; size?: number };
 
 function parsePayload(
   plaintext: string | undefined
 ):
   | { kind: "text"; text: string }
   | { kind: "file"; name: string; mime: string; dataUrl: string; size?: number }
-  | { kind: "album"; items: { dataUrl: string; name?: string; mime?: string }[]; caption?: string } {
+  | { kind: "album"; items: { dataUrl: string; name?: string; mime?: string; size?: number }[]; caption?: string } {
   const raw = String(plaintext || "");
   if (raw.startsWith(PAYLOAD_PREFIX)) {
     try {
@@ -77,11 +79,12 @@ function parsePayload(
           kind: "album",
           items: itemsRaw
             .map((it) => {
-              const o = (it && typeof it === "object") ? (it as { dataUrl?: unknown; name?: unknown; mime?: unknown }) : null;
+              const o = (it && typeof it === "object") ? (it as { dataUrl?: unknown; name?: unknown; mime?: unknown; size?: unknown }) : null;
               return {
                 dataUrl: String(o?.dataUrl || ""),
                 name: o?.name ? String(o.name) : undefined,
                 mime: o?.mime ? String(o.mime) : undefined,
+                size: o?.size ? Number(o.size) : undefined,
               };
             })
             .filter((it) => !!it.dataUrl),
@@ -89,7 +92,8 @@ function parsePayload(
         };
       }
       if (p && p.t === "text") {
-        return { kind: "text", text: String(p.text || "") };
+        const textStr = String(p.text || "");
+        return { kind: "text", text: textStr };
       }
     } catch {
       void 0;
@@ -115,21 +119,34 @@ function isImageUrl(s: string | undefined): boolean {
 
 function readFilesAsImageDrafts(files: File[] | FileList): Promise<ImageDraft[]> {
   const list = Array.isArray(files) ? files : Array.from(files);
+  const maxBytes = 30 * 1024 * 1024;
+  let rejected = false;
+
+  const validFiles = list.filter((f) => {
+    if (f.size > maxBytes) {
+      rejected = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (rejected) {
+    toast.error("Some files exceed the 30MB limit and were skipped");
+  }
+
   return Promise.all(
-    list
-      .filter((f) => String(f?.type || "").startsWith("image/"))
-      .map(
-        (file) =>
-          new Promise<ImageDraft>((resolve, reject) => {
-            const r = new FileReader();
-            r.onerror = () => reject(new Error("read_failed"));
-            r.onload = () => {
-              const dataUrl = String(r.result || "");
-              resolve({ id: crypto.randomUUID(), dataUrl, name: file.name });
-            };
-            r.readAsDataURL(file);
-          })
-      )
+    validFiles.map(
+      (file) =>
+        new Promise<ImageDraft>((resolve, reject) => {
+          const r = new FileReader();
+          r.onerror = () => reject(new Error("read_failed"));
+          r.onload = () => {
+            const dataUrl = String(r.result || "");
+            resolve({ id: crypto.randomUUID(), dataUrl, name: file.name, mime: file.type || "application/octet-stream", size: file.size });
+          };
+          r.readAsDataURL(file);
+        })
+    )
   );
 }
 
@@ -141,18 +158,18 @@ interface MessageModalProps {
   recipientAvatar: string;
 }
 
-export function MessageModal({ 
-  isOpen, 
-  onClose, 
+export function MessageModal({
+  isOpen,
+  onClose,
   recipientId,
-  recipientName, 
+  recipientName,
   recipientAvatar,
 }: MessageModalProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { activeMessages, createDirectConversation, openConversation, sendMessage, sendTyping, editMessage, deleteMessage, startCall, respondToCall } = useChat(user?.id || null);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  
+
   const [newMessage, setNewMessage] = useState("");
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callType, setCallType] = useState<"audio" | "video">("audio");
@@ -197,6 +214,7 @@ export function MessageModal({
     if (isOpen && recipientId) {
       createDirectConversation(recipientId)
         .then((id) => {
+          if (!id) return;
           setConversationId(id);
           openConversation(id);
         })
@@ -290,7 +308,7 @@ export function MessageModal({
     try {
       const payload = `${PAYLOAD_PREFIX}${JSON.stringify({
         t: "album",
-        items: albumDrafts.map((d) => ({ dataUrl: d.dataUrl, name: d.name })),
+        items: albumDrafts.map((d) => ({ dataUrl: d.dataUrl, name: d.name, mime: d.mime, size: d.size })),
         caption: albumCaption.trim() ? albumCaption.trim() : undefined,
       })}`;
       await sendMessage(conversationId, payload, "TEXT");
@@ -335,27 +353,18 @@ export function MessageModal({
     setShowEmojiPicker(false);
   };
 
-  const handleSendFile = (file: File) => {
-    if (!user || !conversationId) return;
-    const maxBytes = 5 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      toast.error("File is too large (max 5MB)");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      if (!dataUrl) return;
-      const payload = `${PAYLOAD_PREFIX}${JSON.stringify({ t: "file", name: file.name, mime: file.type || "application/octet-stream", dataUrl, size: file.size })}`;
-      sendMessage(conversationId, payload, "TEXT").catch((e: unknown) => {
-        const msg = String((e && typeof e === "object" ? (e as { message?: unknown }).message : "") || "");
-        if (msg === "missing_room_key") {
-          window.alert("You can't send messages yet on this device. Import your chat key backup or ask an admin to share the key.");
-        }
-      });
-    };
-    reader.readAsDataURL(file);
-    setShowEmojiPicker(false);
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !files.length || !user || !conversationId) return;
+    readFilesAsImageDrafts(files)
+      .then(async (drafts) => {
+        if (!drafts.length) return;
+        setAlbumDrafts(drafts);
+        setAlbumCaption("");
+        setAlbumOpen(true);
+      })
+      .catch(() => toast.error("Failed to read media"));
+    e.currentTarget.value = "";
   };
 
   const handleCall = (type: "audio" | "video") => {
@@ -451,26 +460,14 @@ export function MessageModal({
     setNewMessage((prev) => prev + native);
   };
 
-  const handleImageUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !files.length || !user || !conversationId) return;
-    readFilesAsImageDrafts(files)
-      .then((drafts) => {
-        if (!drafts.length) return;
-        setAlbumDrafts(drafts);
-        setAlbumCaption("");
-        setAlbumOpen(true);
-      })
-      .catch(() => toast.error("Failed to read images"));
-    e.currentTarget.value = "";
-  };
+  // handleFileUpload replaces handleImageUpload
 
   const pinnedSet = useMemo(() => new Set(pins.map((p) => p.messageId)), [pins]);
 
   const renderItems = useMemo(() => {
     const list = Array.isArray(activeMessages) ? activeMessages : [];
     const out: Array<
-      | { kind: "album"; senderId: string; createdAt: string; caption?: string; sourceMessageId?: string; images: { id: string; dataUrl: string }[] }
+      | { kind: "album"; senderId: string; createdAt: string; caption?: string; sourceMessageId?: string; images: { id: string; dataUrl: string; name?: string; mime?: string; size?: number }[] }
       | { kind: "message"; message: ChatMessage }
     > = [];
 
@@ -485,7 +482,7 @@ export function MessageModal({
             createdAt: String(m.createdAt),
             caption: parsed.caption,
             sourceMessageId: String(m.id),
-            images: parsed.items.map((it, idx) => ({ id: `${m.id}:${idx}`, dataUrl: it.dataUrl })),
+            images: parsed.items.map((it, idx) => ({ id: `${m.id}:${idx}`, dataUrl: it.dataUrl, name: it.name, mime: it.mime, size: it.size })),
           });
           continue;
         }
@@ -507,7 +504,7 @@ export function MessageModal({
             kind: "album",
             senderId: String(m.senderId),
             createdAt: String(group[group.length - 1].createdAt),
-            images: group.map((x) => ({ id: String(x.id), dataUrl: String(x.plaintext || "") })),
+            images: group.map((x) => ({ id: String(x.id), dataUrl: String(x.plaintext || ""), name: `image_${x.id}.png`, mime: "image/png" })),
           });
           continue;
         }
@@ -584,13 +581,13 @@ export function MessageModal({
                     >
                       <Pin className="w-5 h-5 text-muted-foreground" />
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleCall("audio")}
                       className="p-2 hover:bg-muted rounded-lg transition-colors"
                     >
                       <Phone className="w-5 h-5 text-muted-foreground" />
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleCall("video")}
                       className="p-2 hover:bg-muted rounded-lg transition-colors"
                     >
@@ -631,26 +628,47 @@ export function MessageModal({
                               ref={(el) => {
                                 if (item.sourceMessageId) messageRefs.current.set(item.sourceMessageId, el);
                               }}
-                              className={`max-w-[80%] px-3 py-3 rounded-2xl ${
-                                isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
-                              }`}
+                              className={`max-w-[80%] px-3 py-3 rounded-2xl ${isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted text-foreground rounded-bl-sm"
+                                }`}
                             >
                               <div className={`grid gap-1 ${cols === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
-                                {item.images.slice(0, 9).map((im) => (
-                                  <button
-                                    key={im.id}
-                                    type="button"
-                                    onClick={() =>
-                                      openViewer(
-                                        item.images.map((x, i) => ({ url: x.dataUrl, name: `photo_${i + 1}.png` })),
-                                        item.images.findIndex((x) => x.id === im.id)
-                                      )
-                                    }
-                                    className="block"
-                                  >
-                                    <img src={im.dataUrl} alt="Shared image" className="w-full h-24 sm:h-28 object-cover rounded-md" />
-                                  </button>
-                                ))}
+                                {item.images.slice(0, 9).map((im) => {
+                                  const isVideo = im.mime?.startsWith("video/");
+                                  const isImage = !im.mime || im.mime.startsWith("image/");
+                                  return (
+                                    <button
+                                      key={im.id}
+                                      type="button"
+                                      onClick={() => {
+                                        if (isImage || isVideo) {
+                                          openViewer(
+                                            item.images.map((x, i) => ({ url: x.dataUrl, name: x.name || `file_${i + 1}` })),
+                                            item.images.findIndex((x) => x.id === im.id)
+                                          )
+                                        } else {
+                                          triggerDownload(im.dataUrl, im.name || "document");
+                                        }
+                                      }}
+                                      className="block relative w-full h-24 sm:h-28 rounded-md overflow-hidden bg-black/10 border border-white/5 flex flex-col items-center justify-center text-foreground hover:opacity-90"
+                                    >
+                                      {isImage && <img src={im.dataUrl} alt="Shared attachment" className="w-full h-full object-cover" />}
+                                      {isVideo && (
+                                        <>
+                                          <video src={im.dataUrl} className="w-full h-full object-cover" />
+                                          <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                                            <PlayCircle className="w-8 h-8 text-white opacity-80" />
+                                          </div>
+                                        </>
+                                      )}
+                                      {!isImage && !isVideo && (
+                                        <>
+                                          <FileText className="w-8 h-8 mb-2 opacity-80" />
+                                          <span className="text-xs truncate w-full px-2 opacity-80">{im.name || "Document"}</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  );
+                                })}
                               </div>
                               {item.caption && <div className="mt-2 text-sm whitespace-pre-wrap">{item.caption}</div>}
                               <div className="mt-2 flex items-center justify-between gap-2">
@@ -686,109 +704,112 @@ export function MessageModal({
                       const parsed = String(message.type) === "TEXT" ? parsePayload(message.plaintext) : null;
                       const isMine = message.senderId === user?.id;
                       return (
-                      <motion.div
-                        key={message.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`flex ${message.senderId === user?.id ? "justify-end" : "justify-start"}`}
-                      >
-                        <div
-                          ref={(el) => {
-                            messageRefs.current.set(String(message.id), el);
-                          }}
-                          className="max-w-[80%]"
+                        <motion.div
+                          key={message.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className={`flex ${message.senderId === user?.id ? "justify-end" : "justify-start"}`}
                         >
                           <div
-                            className={`px-4 py-2 rounded-2xl ${
-                              message.senderId === user?.id
+                            ref={(el) => {
+                              messageRefs.current.set(String(message.id), el);
+                            }}
+                            className="max-w-[80%]"
+                          >
+                            <div
+                              className={`px-4 py-2 rounded-2xl ${message.senderId === user?.id
                                 ? "bg-primary text-primary-foreground rounded-br-sm"
                                 : "bg-muted text-foreground rounded-bl-sm"
-                            }`}
-                          >
-                            {message.type === "IMAGE" ? (
-                              isImageUrl(message.plaintext) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => openViewer([{ url: String(message.plaintext), name: `image_${String(message.id)}.png` }], 0)}
-                                >
-                                  <img src={String(message.plaintext)} alt="Shared image" className="max-w-full rounded-lg" />
-                                </button>
-                              ) : (
-                                <p className="text-sm">📷 Image</p>
-                              )
-                            ) : String(message.type) === "TEXT" && parsed?.kind === "file" ? (
-                              <div className="rounded-lg border border-white/10 bg-black/10 px-3 py-2">
-                                <div className="text-sm font-medium truncate">{parsed.name}</div>
-                                <div className="text-xs opacity-70 truncate">{parsed.mime}</div>
-                                <div className="mt-2 flex items-center justify-end gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => window.open(parsed.dataUrl, "_blank", "noopener,noreferrer")}
+                                }`}
+                            >
+                              {message.type === "IMAGE" ? (
+                                isImageUrl(message.plaintext) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openViewer([{ url: String(message.plaintext), name: `image_${String(message.id)}.png` }], 0)}
                                   >
-                                    <ExternalLink className="w-4 h-4 mr-2" />
-                                    Open
-                                  </Button>
-                                  <Button size="sm" variant="neon" onClick={() => triggerDownload(parsed.dataUrl, parsed.name)}>
-                                    <Download className="w-4 h-4 mr-2" />
-                                    Download
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                {editingMessageId === String(message.id) ? (
-                                  <div className="space-y-2">
-                                    <Textarea value={editingValue} onChange={(e) => setEditingValue(e.target.value)} className="bg-muted/20" />
-                                    <div className="flex items-center justify-end gap-2">
-                                      <Button size="sm" variant="outline" onClick={() => { setEditingMessageId(null); setEditingValue(""); }}>
-                                        Cancel
-                                      </Button>
-                                      <Button size="sm" variant="neon" onClick={handleSaveEdit}>
-                                        Save
-                                      </Button>
-                                    </div>
-                                  </div>
+                                    <img src={String(message.plaintext)} alt="Shared image" className="max-w-full rounded-lg" />
+                                  </button>
                                 ) : (
-                                  <p className="text-sm whitespace-pre-wrap">{parsed && parsed.kind === "text" ? parsed.text : (message.plaintext || "Encrypted message")}</p>
-                                )}
-                              </>
-                            )}
-
-                            <div className="mt-1 flex items-center justify-between gap-2">
-                              <p className={`text-xs ${message.senderId === user?.id ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-                                {formatTime(message.createdAt)}
-                              </p>
-
-                              {message.senderId === user?.id && editingMessageId !== String(message.id) && (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="p-1 rounded-md hover:bg-black/20">
-                                      <MoreVertical className={`w-4 h-4 ${message.senderId === user?.id ? "text-primary-foreground/70" : "text-muted-foreground"}`} />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    {String(message.type) === "TEXT" && parsed?.kind === "text" && (
-                                      <DropdownMenuItem onClick={() => handleStartEdit(message)}>
-                                        <Pencil className="w-4 h-4 mr-2" />
-                                        Edit
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem onClick={() => handlePinMessage(String(message.id))}>
-                                      <Pin className="w-4 h-4 mr-2" />
-                                      {pinnedSet.has(String(message.id)) ? "Unpin" : "Pin"}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => setDeleteTargetId(String(message.id))}>
-                                      <Trash2 className="w-4 h-4 mr-2" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                  <p className="text-sm">📷 Image</p>
+                                )
+                              ) : String(message.type) === "TEXT" && parsed?.kind === "file" ? (
+                                <div className="rounded-lg border border-white/10 bg-black/10 px-3 py-2">
+                                  <div className="text-sm font-medium truncate">{parsed.name}</div>
+                                  <div className="text-xs opacity-70 truncate">{parsed.mime}</div>
+                                  <div className="mt-2 flex items-center justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => window.open(parsed.dataUrl, "_blank", "noopener,noreferrer")}
+                                    >
+                                      <ExternalLink className="w-4 h-4 mr-2" />
+                                      Open
+                                    </Button>
+                                    <Button size="sm" variant="neon" onClick={() => triggerDownload(parsed.dataUrl, parsed.name)}>
+                                      <Download className="w-4 h-4 mr-2" />
+                                      Download
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {editingMessageId === String(message.id) ? (
+                                    <div className="space-y-2">
+                                      <Textarea value={editingValue} onChange={(e) => setEditingValue(e.target.value)} className="bg-muted/20" />
+                                      <div className="flex items-center justify-end gap-2">
+                                        <Button size="sm" variant="outline" onClick={() => { setEditingMessageId(null); setEditingValue(""); }}>
+                                          Cancel
+                                        </Button>
+                                        <Button size="sm" variant="neon" onClick={handleSaveEdit}>
+                                          Save
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm whitespace-pre-wrap">
+                                      {parsed && parsed.kind === "text"
+                                        ? (String(parsed.text || "").trim() ? parsed.text : (message.plaintext || "Encrypted message"))
+                                        : (message.plaintext || "Encrypted message")}
+                                    </p>
+                                  )}
+                                </>
                               )}
+
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                <p className={`text-xs ${message.senderId === user?.id ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                                  {formatTime(message.createdAt)}
+                                </p>
+
+                                {message.senderId === user?.id && editingMessageId !== String(message.id) && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button className="p-1 rounded-md hover:bg-black/20">
+                                        <MoreVertical className={`w-4 h-4 ${message.senderId === user?.id ? "text-primary-foreground/70" : "text-muted-foreground"}`} />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      {String(message.type) === "TEXT" && parsed?.kind === "text" && (
+                                        <DropdownMenuItem onClick={() => handleStartEdit(message)}>
+                                          <Pencil className="w-4 h-4 mr-2" />
+                                          Edit
+                                        </DropdownMenuItem>
+                                      )}
+                                      <DropdownMenuItem onClick={() => handlePinMessage(String(message.id))}>
+                                        <Pin className="w-4 h-4 mr-2" />
+                                        {pinnedSet.has(String(message.id)) ? "Unpin" : "Pin"}
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => setDeleteTargetId(String(message.id))}>
+                                        <Trash2 className="w-4 h-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </motion.div>
+                        </motion.div>
                       );
                     })
                   )}
@@ -806,8 +827,8 @@ export function MessageModal({
                         exit={{ opacity: 0, y: 10 }}
                         className="absolute bottom-full left-4 mb-2 z-10"
                       >
-                        <Picker 
-                          data={data} 
+                        <Picker
+                          data={data}
                           onEmojiSelect={handleEmojiSelect}
                           theme="dark"
                           previewPosition="none"
@@ -818,25 +839,23 @@ export function MessageModal({
                   </AnimatePresence>
 
                   <div className="flex items-center gap-2">
-                    <input 
-                      type="file" 
+                    <input
+                      type="file"
                       ref={imageInputRef}
-                      accept="image/*" 
+                      accept="image/*,video/*"
                       multiple
                       className="hidden"
-                      onChange={handleImageUpload}
+                      onChange={handleFileUpload}
                     />
                     <input
                       type="file"
                       ref={fileInputRef}
+                      accept="*/*"
+                      multiple
                       className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleSendFile(file);
-                        e.currentTarget.value = "";
-                      }}
+                      onChange={handleFileUpload}
                     />
-                    <button 
+                    <button
                       onClick={() => imageInputRef.current?.click()}
                       className="p-2 hover:bg-muted rounded-lg transition-colors text-muted-foreground hover:text-primary"
                     >
@@ -848,7 +867,7 @@ export function MessageModal({
                     >
                       <Paperclip className="w-5 h-5" />
                     </button>
-                    <button 
+                    <button
                       onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                       className={`p-2 hover:bg-muted rounded-lg transition-colors ${showEmojiPicker ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
                     >
@@ -937,13 +956,13 @@ export function MessageModal({
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Send photos</DialogTitle>
+            <DialogTitle>Send Attachments</DialogTitle>
           </DialogHeader>
 
           <input
             ref={albumAddInputRef}
             type="file"
-            accept="image/*"
+            accept="*/*"
             multiple
             className="hidden"
             onChange={(e) => {
@@ -964,22 +983,40 @@ export function MessageModal({
             </div>
 
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-              {albumDrafts.map((d) => (
-                <div key={d.id} className="relative rounded-lg overflow-hidden border border-border">
-                  <img src={d.dataUrl} alt="Preview" className="w-full h-24 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => removeAlbumDraft(d.id)}
-                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"
-                    title="Remove"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+              {albumDrafts.map((d) => {
+                const isVideo = d.mime?.startsWith("video/");
+                const isImage = !d.mime || d.mime.startsWith("image/");
+                return (
+                  <div key={d.id} className="relative rounded-lg overflow-hidden border border-border h-24 bg-black/10 flex flex-col items-center justify-center">
+                    {isImage && <img src={d.dataUrl} alt="Preview" className="w-full h-full object-cover" />}
+                    {isVideo && (
+                      <>
+                        <video src={d.dataUrl} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-none">
+                          <PlayCircle className="w-8 h-8 text-white opacity-80" />
+                        </div>
+                      </>
+                    )}
+                    {!isImage && !isVideo && (
+                      <>
+                        <FileText className="w-8 h-8 mb-1 opacity-80" />
+                        <span className="text-xs truncate w-full px-2 text-center opacity-80" title={d.name}>{d.name || "Document"}</span>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeAlbumDraft(d.id)}
+                      className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"
+                      title="Remove"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
               {!albumDrafts.length && (
                 <div className="col-span-3 sm:col-span-4 text-sm text-muted-foreground p-6 text-center border border-dashed border-border rounded-lg">
-                  Select photos to preview them here.
+                  Select files to preview them here.
                 </div>
               )}
             </div>
